@@ -1,618 +1,932 @@
 /**
- * Book renderer.
+ * Book renderer (mirrors lib/puzzle-books/render/index.ts in the MyPuzzles web app).
  *
- * Lays a puzzle bundle out as a printable book: front matter, one page per
- * puzzle, a divider, the answer key in the second half, and a back page. The
- * page count is padded to an even number and the answer pages are sized by grid
- * legibility so no answer is ever dropped.
- *
- * A bundle is either produced by the MyPuzzles web app (`--bundle`) or built by
- * hand; see examples/sample-bundle.json.
+ * Generated from the web app renderer so an offline render and a web render
+ * produce the same book: two puzzles per page where legible, two answers per
+ * page, pieceword clue rows and cut-out blocks, colour-only colour sudoku, and
+ * the brand, book reference and copyright on every page.
  */
+// Rendered only on the server (pdfkit is a Node library). The server-only guard
+// lives on lib/puzzle-books/index.ts so this module stays directly testable.
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-
+import { join } from "node:path";
 import PDFDocument from "pdfkit";
-
-import { answerDensityForPuzzle, bookTrimSizes, difficultyLabels, puzzleLabels } from "./recipe.js";
-
-const here = dirname(fileURLToPath(import.meta.url));
-const fontDir = join(here, "..", "assets", "fonts");
-const bodyFontPath = join(fontDir, "DejaVuSans.ttf");
-const boldFontPath = join(fontDir, "DejaVuSans-Bold.ttf");
-const hasFonts = existsSync(bodyFontPath) && existsSync(boldFontPath);
-const bodyFontName = hasFonts ? "BookBody" : "Helvetica";
-const boldFontName = hasFonts ? "BookBody-Bold" : "Helvetica-Bold";
-
+import { bookTrimSizes } from "./recipe.js";
+const FONT_DIR = join(process.cwd(), "assets", "fonts");
+const BODY_FONT = join(FONT_DIR, "DejaVuSans.ttf");
+const BOLD_FONT = join(FONT_DIR, "DejaVuSans-Bold.ttf");
+const bodyFontName = existsSync(BODY_FONT) ? "BookBody" : "Helvetica";
+const boldFontName = existsSync(BOLD_FONT) ? "BookBody-Bold" : "Helvetica-Bold";
+const brandLine = "MyPuzzles";
 function registerFonts(doc) {
-  if (hasFonts) {
-    doc.registerFont("BookBody", bodyFontPath);
-    doc.registerFont("BookBody-Bold", boldFontPath);
-  }
+    if (existsSync(BODY_FONT))
+        doc.registerFont("BookBody", BODY_FONT);
+    if (existsSync(BOLD_FONT))
+        doc.registerFont("BookBody-Bold", BOLD_FONT);
 }
-
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
-const asRows = (value) => (Array.isArray(value) ? value.map((row) => (Array.isArray(row) ? row.map((cell) => String(cell ?? "")) : [String(row ?? "")])) : []);
+const asRows = (value) => Array.isArray(value) ? value.map((row) => (Array.isArray(row) ? row.map((cell) => String(cell ?? "")) : [String(row ?? "")])) : [];
 const asStringArray = (value) => (Array.isArray(value) ? value.map((entry) => String(entry ?? "")) : []);
 const isRecord = (value) => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const records = (value) => (Array.isArray(value) ? value.filter(isRecord) : []);
 const meta = (puzzle) => puzzle.metadata ?? {};
-
+const gridSpan = (puzzle) => {
+    const rows = puzzle.board.length;
+    const columns = Math.max(1, ...puzzle.board.map((row) => row.length));
+    return Math.max(rows, columns);
+};
+/** Families whose answer key is a picture of the solved grid. */
+const gridAnswerFamilies = new Set(["crossword", "cryptic-crossword", "backwords", "kriss-kross", "pieceword", "sudoku", "colour-sudoku"]);
+/**
+ * How many answers fit legibly on one answer page.
+ *
+ * A solved grid needs real room: four per page only for 9x9-sized answers, two
+ * per page up to 20 cells, and the whole page beyond that. Answers that print as
+ * a text list stay dense.
+ */
+export function answerDensityForPuzzle(puzzle) {
+    if (!gridAnswerFamilies.has(puzzle.puzzleType))
+        return 6;
+    const span = gridSpan(puzzle);
+    if (!span)
+        return 6;
+    if (span > 20)
+        return 1;
+    if (span > 9)
+        return 2;
+    return 4;
+}
+/** A4 content box, used when a caller does not pass the real page area. */
+const defaultContentArea = { width: bookTrimSizes.A4.widthPt - bookTrimSizes.A4.marginPt * 2, height: bookTrimSizes.A4.heightPt - bookTrimSizes.A4.marginPt * 2 };
+/** Minimum sizes that keep a half-page puzzle readable in print. */
+const minimumCellSize = 8.5;
+const minimumClueFont = 7;
+/**
+ * Can this puzzle share a page with another one?
+ *
+ * Two puzzles per page is the default, because it halves the page count and the
+ * print cost. It is refused only when the grid would drop below a readable cell
+ * size or when the clues could not fit beside it, in which case that puzzle
+ * keeps a full page instead of being printed illegibly.
+ */
+export function canSharePage(puzzle, area = defaultContentArea) {
+    const half = (area.height - 16) / 2;
+    const body = half - 34;
+    if (body < 120)
+        return false;
+    const span = gridSpan(puzzle);
+    const gridWidth = puzzle.puzzleType === "codeword" ? area.width : Math.min(area.width * 0.58, body);
+    if (span && gridWidth / span < minimumCellSize)
+        return false;
+    const extras = puzzleExtrasFor(puzzle);
+    if (extras.length) {
+        // Two clue columns share the space beside the grid in a half-page cell.
+        const columnWidth = Math.max(50, (area.width - gridWidth - 14) / 2 - 8);
+        const charactersPerLine = Math.max(10, Math.floor(columnWidth / (minimumClueFont * 0.58)));
+        const lines = extras
+            .flatMap((block) => [block.heading, ...block.lines])
+            .reduce((total, line) => total + Math.max(1, Math.ceil(line.length / charactersPerLine)), 0);
+        const linesPerColumn = Math.ceil(lines / 2);
+        if (linesPerColumn * (minimumClueFont * 1.2) > body)
+            return false;
+    }
+    if (puzzle.puzzleType === "pieceword") {
+        // The cut-out sheet needs room for three rows of blocks under the grid.
+        const sheetHeight = body - Math.min(gridWidth, body) - 16;
+        if (sheetHeight < 60)
+            return false;
+    }
+    return true;
+}
+/** Pairs consecutive puzzles whenever both stay legible on half a page. */
+export function buildPages(puzzles, area = defaultContentArea) {
+    const pages = [];
+    for (let index = 0; index < puzzles.length; index += 1) {
+        const current = puzzles[index];
+        const next = puzzles[index + 1];
+        if (next && canSharePage(current, area) && canSharePage(next, area)) {
+            pages.push([current, next]);
+            index += 1;
+        }
+        else {
+            pages.push([current]);
+        }
+    }
+    return pages;
+}
 export function drawGrid(doc, options) {
-  const grid = options.grid ?? [];
-  const rows = Math.max(1, grid.length);
-  const columns = Math.max(1, ...grid.map((row) => row.length));
-  const cellSize = Math.max(options.minCell ?? 8, Math.min(options.width / columns, options.height / rows));
-  const gridWidth = cellSize * columns;
-  const gridHeight = cellSize * rows;
-  const baseFont = options.fontSize ?? clamp(cellSize * 0.52, 6, 18);
-
-  doc.save();
-  doc.lineWidth(0.4);
-  doc.strokeColor("#111111");
-  for (let row = 0; row < rows; row += 1) {
-    for (let col = 0; col < columns; col += 1) {
-      const cell = grid[row]?.[col] ?? "";
-      const x = options.x + col * cellSize;
-      const y = options.y + row * cellSize;
-      if (options.isBlocked?.(cell, row, col)) {
-        doc.rect(x, y, cellSize, cellSize).fill("#111111");
-        continue;
-      }
-      const fill = options.cellFill?.(cell, row, col) ?? null;
-      if (fill) {
-        doc.save();
-        doc.rect(x, y, cellSize, cellSize).fill(fill);
-        doc.restore();
-      }
-      doc.rect(x, y, cellSize, cellSize).stroke();
-      const label = options.cellLabel ? options.cellLabel(cell, row, col) : cell;
-      if (label) {
-        doc.fillColor("#111111").font(boldFontName).fontSize(baseFont);
-        const textWidth = doc.widthOfString(label);
-        doc.text(label, x + (cellSize - textWidth) / 2, y + cellSize / 2 - baseFont * 0.62, { lineBreak: false });
-        doc.font(bodyFontName);
-      }
-      const corner = options.cornerLabel?.(cell, row, col) ?? null;
-      if (corner) {
-        doc.fillColor("#333333").font(bodyFontName).fontSize(Math.max(4, baseFont * 0.42));
-        doc.text(corner, x + cellSize * 0.06, y + cellSize * 0.04, { lineBreak: false });
-      }
+    const grid = options.grid ?? [];
+    const rows = Math.max(1, grid.length);
+    const columns = Math.max(1, ...grid.map((row) => row.length));
+    const cellSize = Math.max(options.minCell ?? 8, Math.min(options.width / columns, options.height / rows));
+    const gridWidth = cellSize * columns;
+    const gridHeight = cellSize * rows;
+    const baseFont = options.fontSize ?? clamp(cellSize * 0.52, 6, 18);
+    doc.save();
+    doc.lineWidth(0.4).strokeColor("#111111");
+    for (let row = 0; row < rows; row += 1) {
+        for (let col = 0; col < columns; col += 1) {
+            const cell = grid[row]?.[col] ?? "";
+            const x = options.x + col * cellSize;
+            const y = options.y + row * cellSize;
+            if (options.isBlocked?.(cell, row, col)) {
+                doc.rect(x, y, cellSize, cellSize).fill("#111111");
+                continue;
+            }
+            const fill = options.cellFill?.(cell, row, col) ?? null;
+            if (fill) {
+                doc.save();
+                doc.rect(x, y, cellSize, cellSize).fill(fill);
+                doc.restore();
+            }
+            doc.rect(x, y, cellSize, cellSize).stroke();
+            const label = options.hideLabels ? "" : options.cellLabel ? options.cellLabel(cell, row, col) : cell;
+            if (label) {
+                doc.fillColor("#111111").font(boldFontName).fontSize(baseFont);
+                doc.text(label, x, y, { width: cellSize, height: cellSize, align: "center", valign: "center", lineBreak: false });
+                doc.font(bodyFontName);
+            }
+            const corner = options.cornerLabel?.(cell, row, col) ?? null;
+            if (corner) {
+                doc.fillColor("#333333").font(bodyFontName).fontSize(Math.max(4, baseFont * 0.42));
+                doc.text(corner, x + cellSize * 0.06, y + cellSize * 0.04, { lineBreak: false });
+            }
+        }
     }
-  }
-  if (options.heavyEvery && options.heavyEvery > 1) {
-    doc.lineWidth(1.4).strokeColor("#111111");
-    for (let col = 0; col <= columns; col += 1) {
-      if (col % options.heavyEvery) continue;
-      const x = options.x + col * cellSize;
-      doc.moveTo(x, options.y).lineTo(x, options.y + gridHeight).stroke();
+    if (options.heavyEvery && options.heavyEvery > 1) {
+        doc.lineWidth(1.4).strokeColor("#111111");
+        for (let col = 0; col <= columns; col += 1) {
+            if (col % options.heavyEvery)
+                continue;
+            const x = options.x + col * cellSize;
+            doc.moveTo(x, options.y).lineTo(x, options.y + gridHeight).stroke();
+        }
+        for (let row = 0; row <= rows; row += 1) {
+            if (row % options.heavyEvery)
+                continue;
+            const y = options.y + row * cellSize;
+            doc.moveTo(options.x, y).lineTo(options.x + gridWidth, y).stroke();
+        }
     }
-    for (let row = 0; row <= rows; row += 1) {
-      if (row % options.heavyEvery) continue;
-      const y = options.y + row * cellSize;
-      doc.moveTo(options.x, y).lineTo(options.x + gridWidth, y).stroke();
-    }
-  }
-  doc.rect(options.x, options.y, gridWidth, gridHeight).lineWidth(1.2).stroke();
-  doc.restore();
-  return { cellSize, width: gridWidth, height: gridHeight };
+    doc.rect(options.x, options.y, gridWidth, gridHeight).lineWidth(1.2).stroke();
+    doc.restore();
+    return { cellSize, width: gridWidth, height: gridHeight };
 }
-
-function balanceColumns(items, columnCount) {
-  if (columnCount <= 1) return [items];
-  const perColumn = Math.ceil(items.length / columnCount);
-  const columns = [];
-  for (let index = 0; index < items.length; index += perColumn) columns.push(items.slice(index, index + perColumn));
-  return columns;
+/** Split labels into balanced columns. */
+export function balanceColumns(items, columnCount) {
+    if (columnCount <= 1)
+        return [items];
+    const perColumn = Math.ceil(items.length / columnCount);
+    const columns = [];
+    for (let index = 0; index < items.length; index += perColumn)
+        columns.push(items.slice(index, index + perColumn));
+    return columns;
 }
-
+// --- family views -----------------------------------------------------------------
 function clueBlocks(puzzle) {
-  const data = meta(puzzle);
-  const blocks = [];
-  for (const [key, heading] of [["across", "Across"], ["down", "Down"]]) {
-    const entries = records(data[key]);
-    if (!entries.length) continue;
-    blocks.push({
-      heading,
-      lines: entries.map((entry) => {
-        const number = entry.number ?? entry.id ?? "";
-        const clue = String(entry.clue ?? entry.clueText ?? entry.text ?? "").trim();
-        const length = entry.length ?? 0;
-        return `${number}. ${clue}${length ? ` (${length})` : ""}`;
-      })
-    });
-  }
-  return blocks;
+    const data = meta(puzzle);
+    const blocks = [];
+    for (const [key, heading] of [["across", "Across"], ["down", "Down"]]) {
+        const entries = records(data[key]);
+        if (!entries.length)
+            continue;
+        blocks.push({
+            heading,
+            lines: entries.map((entry) => {
+                const number = entry.number ?? entry.id ?? "";
+                const clue = String(entry.clue ?? entry.clueText ?? entry.text ?? "").trim();
+                const length = entry.length ?? 0;
+                return `${number}. ${clue}${length ? ` (${length})` : ""}`;
+            })
+        });
+    }
+    return blocks;
 }
-
 function crosswordAnswerGrid(puzzle) {
-  const grid = puzzle.board.map((row) => row.map((cell) => (cell === "#" ? "#" : "")));
-  for (const entry of puzzle.solution ?? []) {
-    const match = /^cell:(\d+):(\d+):(.*)$/.exec(entry);
-    if (!match) continue;
-    const [, row, col, letter] = match;
-    if (grid[Number(row)]?.[Number(col)] !== undefined && grid[Number(row)][Number(col)] !== "#") grid[Number(row)][Number(col)] = letter;
-  }
-  return grid;
+    const grid = puzzle.board.map((row) => row.map((cell) => (cell === "#" ? "#" : "")));
+    for (const entry of puzzle.solution ?? []) {
+        const match = /^cell:(\d+):(\d+):(.*)$/.exec(entry);
+        if (!match)
+            continue;
+        const [, row, col, letter] = match;
+        const r = Number(row);
+        const c = Number(col);
+        if (grid[r]?.[c] !== undefined && grid[r][c] !== "#")
+            grid[r][c] = letter;
+    }
+    return grid;
 }
-
 function backwordsAnswerGrid(puzzle) {
-  const rows = puzzle.board.length;
-  const columns = puzzle.board[0]?.length ?? 0;
-  const raw = puzzle.solution?.[0] ?? "";
-  const mask = raw.includes("|") ? raw.slice(raw.indexOf("|") + 1) : raw;
-  if (mask.length < rows * columns) return puzzle.board;
-  return puzzle.board.map((row, r) => row.map((cell, c) => (mask[r * columns + c] === "1" ? cell : "#")));
+    const rows = puzzle.board.length;
+    const columns = puzzle.board[0]?.length ?? 0;
+    const raw = puzzle.solution?.[0] ?? "";
+    const mask = raw.includes("|") ? raw.slice(raw.indexOf("|") + 1) : raw;
+    if (mask.length < rows * columns)
+        return puzzle.board;
+    return puzzle.board.map((row, r) => row.map((cell, c) => (mask[r * columns + c] === "1" ? cell : "#")));
 }
-
 function krissKrossGrid(puzzle, filled) {
-  const data = meta(puzzle);
-  const rows = Number(data.rows ?? 0);
-  const columns = Number(data.columns ?? 0);
-  const entries = records(data.entries);
-  if (!rows || !columns || !entries.length) return null;
-  const grid = Array.from({ length: rows }, () => Array.from({ length: columns }, () => (filled ? "" : "#")));
-  entries.forEach((entry, index) => {
-    const length = Number(entry.length ?? 0);
-    const vertical = String(entry.direction ?? "across").toLowerCase().startsWith("d");
-    const row = Number(entry.row ?? 0);
-    const col = Number(entry.col ?? 0);
-    const word = filled ? puzzle.solution?.[index] ?? "" : "";
-    for (let offset = 0; offset < length; offset += 1) {
-      const r = vertical ? row + offset : row;
-      const c = vertical ? col : col + offset;
-      if (grid[r]?.[c] === undefined) continue;
-      grid[r][c] = word[offset] ?? "";
-    }
-  });
-  return grid;
-}
-
-function colourLookup(puzzle) {
-  const byValue = new Map();
-  const byName = new Map();
-  for (const color of records(meta(puzzle).colors)) {
-    if (color.value) byValue.set(String(color.value), String(color.hex ?? "#cccccc"));
-    if (color.name) byName.set(String(color.name).toUpperCase(), String(color.hex ?? "#cccccc"));
-  }
-  return { byValue, byName };
-}
-
-function sudokuAnswerRows(puzzle) {
-  const raw = puzzle.solution?.[0] ?? "";
-  if (!raw.includes(",")) return null;
-  return raw.split(",").map((row) => row.split(""));
-}
-
-function codewordBlocks(puzzle) {
-  const data = meta(puzzle);
-  const numbers = asStringArray(data.numbers);
-  const revealed = records(data.revealed);
-  const blocks = [];
-  if (numbers.length) blocks.push({ heading: "Code numbers", lines: [numbers.join(" · ")] });
-  if (revealed.length) blocks.push({ heading: "Given letters", lines: [revealed.map((entry) => `${entry.number} = ${entry.letter}`).join("   ")] });
-  return blocks;
-}
-
-function buildGridSpec(puzzle) {
-  const board = asRows(puzzle.board);
-  const numbers = new Map();
-  for (const entry of records(meta(puzzle).entries)) {
-    const row = Number(entry.row ?? -1);
-    const col = Number(entry.col ?? -1);
-    if (row < 0 || col < 0 || entry.number === undefined || entry.number === null) continue;
-    if (!numbers.has(`${row}:${col}`)) numbers.set(`${row}:${col}`, String(entry.number));
-  }
-  switch (puzzle.puzzleType) {
-    case "crossword":
-    case "cryptic-crossword":
-      return { grid: board, options: { isBlocked: (cell) => cell === "#", cornerLabel: (cell, row, col) => (cell === "#" ? null : numbers.get(`${row}:${col}`) ?? null) }, heightFraction: 0.46, clueColumns: 3 };
-    case "backwords":
-      return { grid: board, options: {}, heightFraction: 0.42, clueColumns: 3 };
-    case "kriss-kross":
-      return { grid: krissKrossGrid(puzzle, false) ?? board, options: { isBlocked: (cell) => cell === "#" }, heightFraction: 0.5, clueColumns: 2 };
-    case "sudoku":
-      return { grid: board.map((row) => row.map((cell) => (cell === "." ? "" : cell))), options: { heavyEvery: 3, fontSize: 14 }, heightFraction: 0.62, clueColumns: 2 };
-    case "colour-sudoku": {
-      const { byValue } = colourLookup(puzzle);
-      return { grid: board.map((row) => row.map((cell) => (cell === "." ? "" : cell))), options: { heavyEvery: 3, fontSize: 12, cellFill: (cell) => (cell ? byValue.get(cell) ?? null : null) }, heightFraction: 0.55, clueColumns: 2 };
-    }
-    case "wordsearch":
-      return { grid: board, options: { fontSize: 9 }, heightFraction: 0.58, clueColumns: 3 };
-    case "pathfinder":
-      return { grid: board, options: { fontSize: 9 }, heightFraction: 0.55, clueColumns: 2 };
-    case "codeword":
-      return { grid: board, options: { isBlocked: (cell) => cell === "" }, heightFraction: 0, clueColumns: 2 };
-    default:
-      return { grid: board, options: {}, heightFraction: 0.5, clueColumns: 2 };
-  }
-}
-
-function puzzleExtras(puzzle) {
-  const data = meta(puzzle);
-  switch (puzzle.puzzleType) {
-    case "crossword":
-    case "cryptic-crossword":
-    case "backwords":
-      return clueBlocks(puzzle);
-    case "wordsearch": {
-      const words = records(data.targets).map((target) => String(target.word ?? "")).filter(Boolean);
-      return words.length ? [{ heading: "Hidden words", lines: words.map((word) => `${word} (${word.length})`) }] : [];
-    }
-    case "kriss-kross": {
-      const bank = asStringArray(data.wordBank);
-      if (!bank.length) return [];
-      const grouped = new Map();
-      for (const word of bank) grouped.set(word.length, [...(grouped.get(word.length) ?? []), word]);
-      return [{ heading: "Word bank", lines: [...grouped.entries()].sort((a, b) => a[0] - b[0]).map(([length, words]) => `${length} letters: ${words.join(", ")}`) }];
-    }
-    case "pieceword": {
-      const across = asStringArray(data.acrossRows);
-      if (across.length) return [{ heading: "Across clues", lines: across }];
-      return (puzzle.instructions ?? []).length ? [{ heading: "How to solve", lines: puzzle.instructions }] : [];
-    }
-    case "pathfinder": {
-      const targets = records(data.targets);
-      return targets.length ? [{ heading: "Hidden paths", lines: targets.map((target, index) => `${index + 1}. ${String(target.label ?? "Path")} — ${String(target.length ?? 0)} letters`) }] : [];
-    }
-    case "codeword":
-      return codewordBlocks(puzzle);
-    case "colour-sudoku": {
-      const colors = records(data.colors);
-      return colors.length ? [{ heading: "Colours", lines: colors.map((color) => `${String(color.value ?? "")} = ${String(color.name ?? "")}`) }] : [];
-    }
-    default:
-      return [];
-  }
-}
-
-function answerView(puzzle) {
-  const data = meta(puzzle);
-  switch (puzzle.puzzleType) {
-    case "crossword":
-    case "cryptic-crossword":
-      return { grid: crosswordAnswerGrid(puzzle), options: { isBlocked: (cell) => cell === "#", fontSize: 8 }, lines: [], heightFraction: 0.5 };
-    case "backwords":
-      return { grid: backwordsAnswerGrid(puzzle), options: { isBlocked: (cell) => cell === "#", fontSize: 8 }, lines: [], heightFraction: 0.5 };
-    case "kriss-kross": {
-      const grid = krissKrossGrid(puzzle, true);
-      return { grid, options: { isBlocked: (cell) => cell === "#", fontSize: 8 }, lines: grid ? [] : (puzzle.solution ?? []).map((word, index) => `${index + 1}. ${word}`), heightFraction: 0.5 };
-    }
-    case "pieceword":
-      return { grid: null, options: {}, lines: (puzzle.solution ?? []).map((entry, index) => `${index + 1}. ${entry}`), heightFraction: 0.2 };
-    case "sudoku":
-      return { grid: sudokuAnswerRows(puzzle), options: { heavyEvery: 3, fontSize: 9 }, lines: [], heightFraction: 0.5 };
-    case "colour-sudoku": {
-      const { byName } = colourLookup(puzzle);
-      return { grid: sudokuAnswerRows(puzzle), options: { heavyEvery: 3, fontSize: 9, cellFill: (cell) => (cell ? byName.get(String(cell).toUpperCase()) ?? null : null) }, lines: [], heightFraction: 0.5 };
-    }
-    case "wordsearch": {
-      const words = records(data.targets).map((target) => String(target.word ?? ""));
-      const coordinates = (puzzle.solution ?? []).map((entry) => {
-        const parts = entry.split("|");
-        return parts.length >= 4 ? parts[3].replace(/;/g, " - ") : "";
-      });
-      return { grid: null, options: {}, lines: words.map((word, index) => `${word}${coordinates[index] ? `  (${coordinates[index]})` : ""}`), heightFraction: 0.2 };
-    }
-    case "pathfinder":
-      return {
-        grid: null,
-        options: {},
-        lines: (puzzle.solution ?? []).map((entry, index) => {
-          const word = entry.split(":")[2] ?? "";
-          const cells = entry.split(":").slice(3).join(":");
-          return `Path ${index + 1}: ${word} (${cells ? cells.split("|").length : 0} cells)`;
-        }),
-        heightFraction: 0.2
-      };
-    case "codeword":
-      return { grid: null, options: {}, lines: (puzzle.solution ?? []).map((word, index) => `${index + 1}. ${word}`), heightFraction: 0.2 };
-    default:
-      return { grid: null, options: {}, lines: puzzle.solution ?? [], heightFraction: 0.2 };
-  }
-}
-
-function drawCodewordPuzzle(doc, puzzle, x, y, width, height) {
-  const rows = puzzle.board.length;
-  if (!rows) return y;
-  const rowHeight = Math.min(64, height / rows);
-  let cursorY = y;
-  doc.font(bodyFontName).fontSize(10).fillColor("#111111");
-  puzzle.board.forEach((row) => {
-    const words = row.map((cell) => String(cell).split("-").filter(Boolean));
-    const cellSize = Math.min(16, (width - 40) / Math.max(1, Math.max(...words.map((word) => word.length))));
-    let cursorX = x;
-    words.forEach((word) => {
-      word.forEach((number) => {
-        doc.lineWidth(0.4).strokeColor("#111111");
-        doc.rect(cursorX, cursorY, cellSize, cellSize).stroke();
-        doc.font(boldFontName).fontSize(Math.max(6, cellSize * 0.5)).fillColor("#111111");
-        doc.text(number, cursorX + 1, cursorY + cellSize * 0.25, { width: cellSize - 2, align: "center", lineBreak: false });
-        cursorX += cellSize;
-      });
-      cursorX += 8;
+    const data = meta(puzzle);
+    const rows = Number(data.rows ?? 0);
+    const columns = Number(data.columns ?? 0);
+    const entries = records(data.entries);
+    if (!rows || !columns || !entries.length)
+        return null;
+    const grid = Array.from({ length: rows }, () => Array.from({ length: columns }, () => (filled ? "" : "#")));
+    entries.forEach((entry, index) => {
+        const length = Number(entry.length ?? 0);
+        const vertical = String(entry.direction ?? "across").toLowerCase().startsWith("d");
+        const row = Number(entry.row ?? 0);
+        const col = Number(entry.col ?? 0);
+        const word = filled ? puzzle.solution?.[index] ?? "" : "";
+        for (let offset = 0; offset < length; offset += 1) {
+            const r = vertical ? row + offset : row;
+            const c = vertical ? col : col + offset;
+            if (grid[r]?.[c] === undefined)
+                continue;
+            grid[r][c] = word[offset] ?? "";
+        }
     });
-    cursorY += rowHeight;
-  });
-  return cursorY;
+    return grid;
 }
-
-function drawExtras(doc, blocks, x, y, width, height, maxColumns) {
-  if (!blocks.length || height < 20) return;
-  const flat = [];
-  for (const block of blocks) [block.heading, ...block.lines].forEach((text, index) => flat.push({ heading: index === 0, text }));
-  const lineHeight = 10.5;
-  const columns = Math.min(Math.max(1, maxColumns), Math.max(1, Math.ceil((flat.length * lineHeight) / height)));
-  const columnWidth = width / columns - 8;
-  balanceColumns(flat, columns).forEach((bucket, columnIndex) => {
+function colourLookup(puzzle) {
+    const byValue = new Map();
+    const byName = new Map();
+    const legend = [];
+    for (const color of records(meta(puzzle).colors)) {
+        const value = String(color.value ?? "");
+        const name = String(color.name ?? "");
+        const hex = String(color.hex ?? "#cccccc");
+        if (value)
+            byValue.set(value, hex);
+        if (name)
+            byName.set(name.toUpperCase(), hex);
+        legend.push({ value, name, hex });
+    }
+    return { byValue, byName, legend };
+}
+function sudokuAnswerRows(puzzle) {
+    const raw = puzzle.solution?.[0] ?? "";
+    if (!raw.includes(","))
+        return null;
+    return raw.split(",").map((row) => row.split(""));
+}
+/**
+ * Assembles the solved pieceword grid from the stored piece order.
+ * solution[0] is `pw2|piece-a,piece-b,...` in board order, and each piece is a
+ * 3x3 block, so the answer can be shown as the finished crossword instead of a
+ * repeated clue list.
+ */
+function piecewordAnswerGrid(puzzle) {
+    const data = meta(puzzle);
+    const blockRows = Number(data.blockRows ?? 0);
+    const blockColumns = Number(data.blockColumns ?? 0);
+    const blockSize = Number(data.blockSize ?? 3);
+    const pieces = records(data.pieces);
+    const raw = puzzle.solution?.[0] ?? "";
+    if (!blockRows || !blockColumns || !pieces.length || !raw)
+        return null;
+    const order = (raw.includes("|") ? raw.slice(raw.indexOf("|") + 1) : raw).split(",").map((id) => id.trim()).filter(Boolean);
+    if (order.length !== blockRows * blockColumns)
+        return null;
+    const grid = Array.from({ length: blockRows * blockSize }, () => Array.from({ length: blockColumns * blockSize }, () => "#"));
+    const byId = new Map(pieces.map((piece) => [String(piece.id ?? ""), piece]));
+    order.forEach((pieceId, index) => {
+        const piece = byId.get(pieceId);
+        if (!piece)
+            return;
+        const cells = asRows(piece.cells);
+        const originRow = Math.floor(index / blockColumns) * blockSize;
+        const originCol = (index % blockColumns) * blockSize;
+        for (let r = 0; r < cells.length; r += 1) {
+            for (let c = 0; c < (cells[r]?.length ?? 0); c += 1) {
+                const value = String(cells[r][c] ?? "#");
+                if (grid[originRow + r]?.[originCol + c] === undefined)
+                    continue;
+                grid[originRow + r][originCol + c] = value === "" ? "#" : value;
+            }
+        }
+    });
+    return grid;
+}
+/** Pieceword clues grouped by the row they belong to. */
+function piecewordClueBlocks(puzzle) {
+    const rows = records(meta(puzzle).acrossRows);
+    if (rows.length) {
+        return [
+            {
+                heading: "Across clues by row",
+                lines: rows
+                    .slice()
+                    .sort((a, b) => Number(a.row ?? 0) - Number(b.row ?? 0))
+                    .map((entry) => {
+                    const clues = records(entry.clues)
+                        .map((clue) => `${clue.number ?? ""}. ${String(clue.clue ?? "").trim()}${clue.length ? ` (${clue.length})` : ""}`)
+                        .join("   ");
+                    return `Row ${entry.row ?? "?"}: ${clues}`;
+                })
+            }
+        ];
+    }
+    const instructions = puzzle.instructions ?? [];
+    return instructions.length ? [{ heading: "How to solve", lines: instructions }] : [];
+}
+/** The shuffled 3x3 blocks a pieceword solver cuts out and places. */
+function drawPiecewordPieces(doc, puzzle, x, y, width, height) {
+    const pieces = records(meta(puzzle).pieces);
+    if (!pieces.length || height < 40)
+        return y;
+    const gap = 10;
+    // Choose the block count per row that fits both the width and the height, so
+    // the cut-out sheet can never run off the page.
+    let perRow = 6;
+    let rowsCount = Math.ceil(pieces.length / perRow);
+    let pieceSize = Math.min((width - gap * (perRow - 1)) / perRow, (height - 16 - gap * (rowsCount - 1)) / rowsCount);
+    for (const candidate of [5, 4, 3]) {
+        if (pieceSize >= 26)
+            break;
+        const rows = Math.ceil(pieces.length / candidate);
+        const size = Math.min((width - gap * (candidate - 1)) / candidate, (height - 16 - gap * (rows - 1)) / rows);
+        if (size > pieceSize) {
+            perRow = candidate;
+            rowsCount = rows;
+            pieceSize = size;
+        }
+    }
+    if (pieceSize < 14)
+        return y;
+    const cell = pieceSize / 3;
     let cursorY = y;
-    const columnX = x + columnIndex * (columnWidth + 8);
-    for (const item of bucket) {
-      const remaining = y + height - cursorY;
-      if (remaining < 6) break;
-      doc.font(item.heading ? boldFontName : bodyFontName).fontSize(item.heading ? 9 : 8).fillColor(item.heading ? "#111111" : "#222222");
-      doc.text(item.text, columnX, cursorY, { width: columnWidth, height: remaining, ellipsis: false, lineBreak: true });
-      cursorY = doc.y + (item.heading ? 3 : 1);
-    }
-  });
-}
-
-function puzzleHeader(doc, puzzle, x, y, width) {
-  doc.font(boldFontName).fontSize(13).fillColor("#111111");
-  doc.text(`${puzzle.title ?? puzzleLabels[puzzle.puzzleType] ?? puzzle.puzzleType} · ${difficultyLabels[puzzle.difficulty] ?? puzzle.difficulty}`, x, y, { width: width * 0.7, lineBreak: false });
-  doc.font(bodyFontName).fontSize(11).fillColor("#444444");
-  doc.text(`Puzzle ${puzzle.puzzleNumber}`, x, y + 1, { width, align: "right", lineBreak: false });
-  if (puzzle.prompt) {
-    doc.font(bodyFontName).fontSize(8.5).fillColor("#555555");
-    doc.text(puzzle.prompt, x, y + 20, { width, lineBreak: true });
-  }
-  return doc.y + 6;
-}
-
-function drawPuzzlePage(doc, puzzle, area) {
-  puzzle.board = asRows(puzzle.board);
-  const startY = puzzleHeader(doc, puzzle, area.x, area.y, area.width);
-  const spec = buildGridSpec(puzzle);
-  if (puzzle.puzzleType === "codeword") {
-    drawCodewordPuzzle(doc, puzzle, area.x, startY, area.width, area.height * 0.55);
-    drawExtras(doc, puzzleExtras(puzzle), area.x, startY + area.height * 0.6, area.width, area.height * 0.35, spec.clueColumns);
-    return;
-  }
-  const gridHeight = Math.max(60, area.height * spec.heightFraction);
-  const maxGridWidth = spec.clueColumns > 1 ? area.width * 0.62 : area.width;
-  const drawn = drawGrid(doc, { grid: spec.grid, x: area.x + Math.max(0, (maxGridWidth - Math.min(maxGridWidth, gridHeight)) / 2), y: startY, width: maxGridWidth, height: gridHeight, ...spec.options });
-  const extrasX = area.x + drawn.width + 16;
-  const extrasWidth = area.width - drawn.width - 16;
-  const blocks = puzzleExtras(puzzle);
-  if (extrasWidth > 140) drawExtras(doc, blocks, extrasX, startY, extrasWidth, Math.max(area.height - (startY - area.y), 80), 2);
-  else drawExtras(doc, blocks, area.x, startY + drawn.height + 14, area.width, Math.max(area.height - (startY - area.y) - drawn.height - 14, 0), spec.clueColumns);
-}
-
-function drawAnswerPage(doc, puzzles, area, heading, pageLabel) {
-  doc.font(boldFontName).fontSize(14).fillColor("#111111").text(heading, area.x, area.y, { width: area.width, lineBreak: false });
-  doc.font(bodyFontName).fontSize(9).fillColor("#555555").text(pageLabel, area.x, area.y + 18, { width: area.width, lineBreak: false });
-  const headerSpace = 38;
-  const perPuzzle = (area.height - headerSpace) / Math.max(1, puzzles.length);
-  let cursorY = area.y + headerSpace;
-  for (const puzzle of puzzles) {
-    const view = answerView(puzzle);
-    const blockHeight = view.grid ? Math.max(40, Math.min(area.height * view.heightFraction, perPuzzle - 18)) : 0;
-    doc.font(boldFontName).fontSize(10).fillColor("#111111");
-    doc.text(`Puzzle ${puzzle.puzzleNumber} · ${puzzle.title ?? puzzleLabels[puzzle.puzzleType] ?? ""} · ${difficultyLabels[puzzle.difficulty] ?? ""}`, area.x, cursorY, { width: area.width, lineBreak: false });
+    doc.font(boldFontName).fontSize(9).fillColor("#111111").text("Cut out these 3x3 blocks and place them in the empty grid", x, cursorY, { width, lineBreak: false });
     cursorY += 14;
-    if (view.grid) {
-      const drawn = drawGrid(doc, { grid: view.grid, x: area.x, y: cursorY, width: Math.min(area.width, blockHeight), height: blockHeight, ...view.options });
-      cursorY += drawn.height + 6;
-    }
-    if (view.lines.length) {
-      const columns = view.lines.length > 18 ? 3 : view.lines.length > 8 ? 2 : 1;
-      const columnWidth = area.width / columns - 8;
-      balanceColumns(view.lines, columns).forEach((bucket, index) => {
-        doc.font(bodyFontName).fontSize(8).fillColor("#222222");
-        doc.text(bucket.join("\n"), area.x + index * (columnWidth + 8), cursorY, { width: columnWidth, height: Math.max(10, area.y + area.height - cursorY), ellipsis: false, lineBreak: true });
-      });
-      cursorY += 8 + Math.ceil(view.lines.length / columns) * 10;
-    }
-    cursorY += 10;
-  }
+    pieces.forEach((piece, index) => {
+        const rowIndex = Math.floor(index / perRow);
+        const colIndex = index % perRow;
+        const originX = x + colIndex * (pieceSize + gap);
+        const originY = cursorY + rowIndex * (pieceSize + gap);
+        const cells = asRows(piece.cells);
+        for (let r = 0; r < 3; r += 1) {
+            for (let c = 0; c < 3; c += 1) {
+                const value = String(cells[r]?.[c] ?? "");
+                const cx = originX + c * cell;
+                const cy = originY + r * cell;
+                if (!value || value === "#") {
+                    doc.rect(cx, cy, cell, cell).fill("#111111");
+                    continue;
+                }
+                doc.rect(cx, cy, cell, cell).lineWidth(0.4).stroke("#111111");
+                const size = Math.max(5, Math.min(cell * 0.55, 12));
+                doc.font(boldFontName).fontSize(size).fillColor("#111111");
+                doc.text(value, cx, cy, { width: cell, height: cell, align: "center", valign: "center", lineBreak: false });
+            }
+        }
+        doc.font(bodyFontName).fontSize(6).fillColor("#555555").text(`Block ${index + 1}`, originX, originY + pieceSize + 1, { width: pieceSize, align: "center", lineBreak: false });
+    });
+    return cursorY + rowsCount * (pieceSize + gap) + 6;
 }
-
-/** Renders the interior. Returns { buffer, pageMap, pageCount }. */
-export async function renderInterior(bundle, { pass = "digital" } = {}) {
-  const trim = bookTrimSizes[bundle.trimSize ?? "A4"] ?? bookTrimSizes.A4;
-  const puzzles = (bundle.puzzles ?? []).map((puzzle, index) => ({ ...puzzle, puzzleNumber: puzzle.puzzleNumber ?? index + 1 }));
-  const answersInBack = bundle.answersInBack !== false;
-
-  const doc = new PDFDocument({
-    size: [trim.widthPt, trim.heightPt],
-    margin: trim.marginPt,
-    autoFirstPage: false,
-    bufferPages: true,
-    compress: true,
-    info: {
-      Title: bundle.title ?? "Puzzle book",
-      Author: bundle.author ?? "MyPuzzles",
-      Subject: bundle.subtitle ?? "Printable puzzle book",
-      Creator: `MyPuzzles Book Studio (${pass})`,
-      Producer: "MyPuzzles Book Studio",
-      CreationDate: new Date(bundle.generatedAt ?? Date.now()),
-      ModDate: new Date(bundle.generatedAt ?? Date.now())
+/** A legend of real colour swatches, used instead of numbers. */
+function drawColourLegend(doc, puzzle, x, y, width) {
+    const { legend } = colourLookup(puzzle);
+    if (!legend.length)
+        return y;
+    const columns = 3;
+    const rows = Math.ceil(legend.length / columns);
+    const rowHeight = 13;
+    const columnWidth = width / columns;
+    const swatch = 9;
+    legend.forEach((color, index) => {
+        const column = Math.floor(index / rows);
+        const row = index % rows;
+        const cx = x + column * columnWidth;
+        const cy = y + row * rowHeight;
+        doc.rect(cx, cy, swatch, swatch).fill(color.hex);
+        doc.rect(cx, cy, swatch, swatch).lineWidth(0.4).stroke("#333333");
+        doc.font(bodyFontName).fontSize(7.5).fillColor("#333333");
+        doc.text(color.name, cx + swatch + 4, cy + 1, { width: columnWidth - swatch - 6, lineBreak: false });
+    });
+    return y + rows * rowHeight + 4;
+}
+export function gridSpecFor(puzzle) {
+    const board = asRows(puzzle.board);
+    const numbers = new Map();
+    for (const entry of records(meta(puzzle).entries)) {
+        const row = Number(entry.row ?? -1);
+        const col = Number(entry.col ?? -1);
+        if (row < 0 || col < 0 || entry.number === undefined || entry.number === null)
+            continue;
+        if (!numbers.has(`${row}:${col}`))
+            numbers.set(`${row}:${col}`, String(entry.number));
     }
-  });
-  registerFonts(doc);
-  const chunks = [];
-  doc.on("data", (chunk) => chunks.push(chunk));
-  const finished = new Promise((resolve) => doc.on("end", () => resolve(Buffer.concat(chunks))));
-  const area = { x: trim.marginPt, y: trim.marginPt, width: trim.widthPt - trim.marginPt * 2, height: trim.heightPt - trim.marginPt * 2 };
-
-  doc.addPage();
-  doc.font(boldFontName).fontSize(30).fillColor("#111111").text(bundle.title ?? "Puzzle book", area.x, area.y + 120, { width: area.width, align: "center" });
-  if (bundle.subtitle) doc.font(bodyFontName).fontSize(14).fillColor("#444444").text(bundle.subtitle, area.x, doc.y + 12, { width: area.width, align: "center" });
-  doc.font(bodyFontName).fontSize(11).fillColor("#555555").text(`${puzzles.length} puzzles · Answers in the second half`, area.x, doc.y + 24, { width: area.width, align: "center" });
-
-  doc.addPage();
-  doc.font(boldFontName).fontSize(16).fillColor("#111111").text("How to use this book", area.x, area.y);
-  doc.font(bodyFontName).fontSize(10).fillColor("#222222").text(
-    [
-      "Every puzzle is printed on its own page. Work at your own pace and use a pencil if you may want a second attempt.",
-      "",
-      "Answers for every puzzle are collected in the second half of the book, in the same order as the puzzles, and each answer keeps its puzzle number.",
-      "",
-      "Difficulty rises through the book, and every puzzle page shows its difficulty next to the title.",
-      "",
-      `Generated ${new Date(bundle.generatedAt ?? Date.now()).toISOString().slice(0, 10)} · version ${bundle.volumeVersion ?? 1}`
-    ].join("\n"),
-    area.x,
-    area.y + 26,
-    { width: area.width, height: area.height - 26, ellipsis: false, lineBreak: true }
-  );
-
-  doc.addPage();
-  doc.font(boldFontName).fontSize(16).fillColor("#111111").text("Contents", area.x, area.y);
-  const byDifficulty = new Map();
-  for (const puzzle of puzzles) byDifficulty.set(puzzle.difficulty, (byDifficulty.get(puzzle.difficulty) ?? 0) + 1);
-  doc.font(bodyFontName).fontSize(10).fillColor("#222222").text(
-    [...byDifficulty.entries()].map(([difficulty, count]) => `${difficultyLabels[difficulty] ?? difficulty}: ${count} puzzles`).join("\n"),
-    area.x,
-    area.y + 26,
-    { width: area.width, height: area.height - 60, ellipsis: false }
-  );
-
-  const pageMap = [];
-  for (const puzzle of puzzles) {
-    doc.addPage();
-    drawPuzzlePage(doc, puzzle, area);
-    pageMap.push({ puzzleNumber: puzzle.puzzleNumber, pageIndex: 0, answerPageIndex: null });
-  }
-  const firstPuzzlePage = 3;
-  pageMap.forEach((entry, index) => {
-    entry.pageIndex = firstPuzzlePage + index;
-  });
-
-  const answerStartIndex = firstPuzzlePage + puzzles.length + 1;
-  if (answersInBack && puzzles.length) {
-    doc.addPage();
-    doc.font(boldFontName).fontSize(26).fillColor("#111111").text("Answers", area.x, area.y + 200, { width: area.width, align: "center" });
-    doc.font(bodyFontName).fontSize(11).fillColor("#555555").text("The answer for each puzzle keeps its puzzle number.", area.x, doc.y + 16, { width: area.width, align: "center" });
-
+    switch (puzzle.puzzleType) {
+        case "crossword":
+        case "cryptic-crossword":
+            return {
+                grid: board,
+                options: {
+                    isBlocked: (cell) => cell === "#",
+                    cornerLabel: (cell, row, col) => (cell === "#" ? null : numbers.get(`${row}:${col}`) ?? null)
+                },
+                clueColumns: 3
+            };
+        case "backwords":
+            return { grid: board, options: {}, clueColumns: 3 };
+        case "kriss-kross":
+            return { grid: krissKrossGrid(puzzle, false) ?? board, options: { isBlocked: (cell) => cell === "#" }, clueColumns: 2 };
+        case "sudoku":
+            return { grid: board.map((row) => row.map((cell) => (cell === "." ? "" : cell))), options: { heavyEvery: 3 }, clueColumns: 2 };
+        case "colour-sudoku": {
+            const { byValue } = colourLookup(puzzle);
+            return {
+                grid: board.map((row) => row.map((cell) => (cell === "." ? "" : cell))),
+                options: { heavyEvery: 3, hideLabels: true, cellFill: (cell) => (cell ? byValue.get(cell) ?? null : null) },
+                clueColumns: 2
+            };
+        }
+        case "wordsearch":
+            return { grid: board, options: { fontSize: 9 }, clueColumns: 3 };
+        case "pathfinder":
+            return { grid: board, options: { fontSize: 9 }, clueColumns: 2 };
+        case "pieceword":
+            return { grid: board, options: { isBlocked: (cell) => cell === "#" }, clueColumns: 2 };
+        default:
+            return { grid: board, options: {}, clueColumns: 2 };
+    }
+}
+export function puzzleExtrasFor(puzzle) {
+    const data = meta(puzzle);
+    switch (puzzle.puzzleType) {
+        case "crossword":
+        case "cryptic-crossword":
+        case "backwords":
+            return clueBlocks(puzzle);
+        case "wordsearch": {
+            const words = records(data.targets).map((target) => String(target.word ?? "")).filter(Boolean);
+            return words.length ? [{ heading: "Hidden words", lines: words.map((word) => `${word} (${word.length})`) }] : [];
+        }
+        case "kriss-kross": {
+            const bank = asStringArray(data.wordBank);
+            if (!bank.length)
+                return [];
+            const grouped = new Map();
+            for (const word of bank)
+                grouped.set(word.length, [...(grouped.get(word.length) ?? []), word]);
+            return [{ heading: "Word bank", lines: [...grouped.entries()].sort((a, b) => a[0] - b[0]).map(([length, words]) => `${length} letters: ${words.join(", ")}`) }];
+        }
+        case "pieceword":
+            return piecewordClueBlocks(puzzle);
+        case "pathfinder": {
+            const targets = records(data.targets);
+            if (!targets.length)
+                return [];
+            return [{ heading: `Hidden paths (${targets.length})`, lines: targets.map((target, index) => `Path ${index + 1} - ${String(target.length ?? 0)} cells`) }];
+        }
+        case "codeword": {
+            const numbers = asStringArray(data.numbers);
+            const revealed = records(data.revealed);
+            const blocks = [];
+            if (numbers.length)
+                blocks.push({ heading: "Code numbers", lines: [numbers.join(" - ")] });
+            if (revealed.length)
+                blocks.push({ heading: "Given letters", lines: [revealed.map((entry) => `${entry.number} = ${entry.letter}`).join("   ")] });
+            return blocks;
+        }
+        case "colour-sudoku":
+            // The colour key is drawn as real swatches next to the grid.
+            return [];
+        default:
+            return [];
+    }
+}
+function answerView(puzzle) {
+    const data = meta(puzzle);
+    switch (puzzle.puzzleType) {
+        case "crossword":
+        case "cryptic-crossword":
+            return { grid: crosswordAnswerGrid(puzzle), options: { isBlocked: (cell) => cell === "#", fontSize: 8 }, lines: [] };
+        case "backwords":
+            return { grid: backwordsAnswerGrid(puzzle), options: { isBlocked: (cell) => cell === "#", fontSize: 8 }, lines: [] };
+        case "kriss-kross": {
+            const grid = krissKrossGrid(puzzle, true);
+            return { grid, options: { isBlocked: (cell) => cell === "#", fontSize: 8 }, lines: grid ? [] : (puzzle.solution ?? []).map((word, index) => `${index + 1}. ${word}`) };
+        }
+        case "pieceword": {
+            const grid = piecewordAnswerGrid(puzzle);
+            return grid
+                ? { grid, options: { isBlocked: (cell) => cell === "#", fontSize: 8 }, lines: [] }
+                : { grid: null, options: {}, lines: piecewordClueBlocks(puzzle).flatMap((block) => [block.heading, ...block.lines]) };
+        }
+        case "sudoku":
+            return { grid: sudokuAnswerRows(puzzle), options: { heavyEvery: 3, fontSize: 9 }, lines: [] };
+        case "colour-sudoku": {
+            const { byName } = colourLookup(puzzle);
+            return {
+                grid: sudokuAnswerRows(puzzle),
+                options: { heavyEvery: 3, hideLabels: true, cellFill: (cell) => (cell ? byName.get(String(cell).toUpperCase()) ?? null : null) },
+                lines: []
+            };
+        }
+        case "wordsearch": {
+            const words = records(data.targets).map((target) => String(target.word ?? ""));
+            const coordinates = (puzzle.solution ?? []).map((entry) => {
+                const parts = entry.split("|");
+                return parts.length >= 4 ? parts[3].replace(/;/g, " - ") : "";
+            });
+            return { grid: null, options: {}, lines: words.map((word, index) => `${word}${coordinates[index] ? `  (${coordinates[index]})` : ""}`) };
+        }
+        case "pathfinder":
+            return {
+                grid: null,
+                options: {},
+                lines: (puzzle.solution ?? []).map((entry, index) => {
+                    const word = entry.split(":")[2] ?? "";
+                    const cells = entry.split(":").slice(3).join(":");
+                    return `Path ${index + 1}: ${word} (${cells ? cells.split("|").length : 0} cells)`;
+                })
+            };
+        case "codeword":
+            return { grid: null, options: {}, lines: (puzzle.solution ?? []).map((word, index) => `${index + 1}. ${word}`) };
+        default:
+            return { grid: null, options: {}, lines: puzzle.solution ?? [] };
+    }
+}
+// --- answer packing ----------------------------------------------------------------
+/**
+ * Estimated height an answer block needs on the page.
+ *
+ * Answers are packed by this measurement rather than by a fixed count, because a
+ * block that overflows its slot makes pdfkit paginate on its own, which both
+ * overlaps the text and shifts every following page reference.
+ */
+export function estimateAnswerHeight(puzzle, area) {
+    const title = 13;
+    const view = answerView(puzzle);
+    let height = title;
+    if (view.grid)
+        height += Math.min(area.width * 0.46, area.height * 0.4, 300) + 5;
+    if (view.lines.length) {
+        const columns = view.lines.length > 14 ? 3 : view.lines.length > 6 ? 2 : 1;
+        const columnWidth = area.width / columns - 8;
+        const charactersPerLine = Math.max(12, Math.floor(columnWidth / 4.6));
+        const lines = view.lines.reduce((total, line) => total + Math.max(1, Math.ceil(line.length / charactersPerLine)), 0);
+        const linesPerColumn = Math.ceil(lines / columns);
+        height += linesPerColumn * 9.6 + 4;
+    }
+    return height + 6;
+}
+/**
+ * Packs answers two to a page, which is the owner's chosen density. The packing
+ * still measures every block, so a page is never overfilled and a block can
+ * never overlap the next one.
+ */
+export function buildAnswerGroups(puzzles, area, options = {}) {
+    const maxPerPage = Math.max(1, options.maxPerPage ?? 2);
+    const budget = area.height - 22;
+    const perBlock = budget / maxPerPage;
     const groups = [];
     let group = [];
+    let used = 0;
     for (const puzzle of puzzles) {
-      const limit = Math.min(answerDensityForPuzzle(puzzle), ...group.map(answerDensityForPuzzle), Number.POSITIVE_INFINITY);
-      if (group.length >= limit) {
-        groups.push(group);
-        group = [];
-      }
-      group.push(puzzle);
+        const needed = Math.min(Math.max(estimateAnswerHeight(puzzle, area), perBlock * 0.6), perBlock);
+        if (group.length >= maxPerPage || (group.length && used + needed > budget)) {
+            groups.push(group);
+            group = [];
+            used = 0;
+        }
+        group.push(puzzle);
+        used += needed;
     }
-    if (group.length) groups.push(group);
-
-    let placed = 0;
-    groups.forEach((answerGroup, offset) => {
-      doc.addPage();
-      drawAnswerPage(doc, answerGroup, area, "Answers", `Page ${offset + 1}`);
-      answerGroup.forEach((_, index) => {
-        pageMap[placed + index].answerPageIndex = answerStartIndex + offset;
-      });
-      placed += answerGroup.length;
+    if (group.length)
+        groups.push(group);
+    return groups;
+}
+// --- page drawing ------------------------------------------------------------------
+function drawExtras(doc, blocks, x, y, width, height, maxColumns, compact = false) {
+    if (!blocks.length || height < 16)
+        return;
+    const flat = [];
+    for (const block of blocks)
+        [block.heading, ...block.lines].forEach((text, index) => flat.push({ heading: index === 0, text }));
+    const bodySize = compact ? 7 : 8;
+    doc.font(bodyFontName).fontSize(bodySize);
+    const estimate = flat.reduce((total, item) => total + doc.heightOfString(item.text, { width: width / 2 }) + 2, 0);
+    const columns = clamp(Math.ceil(estimate / Math.max(1, height)), 1, Math.max(1, Math.min(maxColumns, 3)));
+    const columnWidth = width / columns - 8;
+    balanceColumns(flat, columns).forEach((bucket, columnIndex) => {
+        let cursorY = y;
+        const columnX = x + columnIndex * (columnWidth + 8);
+        for (const item of bucket) {
+            const font = item.heading ? boldFontName : bodyFontName;
+            const size = item.heading ? bodySize + 1 : bodySize;
+            doc.font(font).fontSize(size);
+            const textHeight = doc.heightOfString(item.text, { width: columnWidth });
+            if (cursorY + textHeight > y + height)
+                return;
+            doc.fillColor(item.heading ? "#111111" : "#222222");
+            doc.text(item.text, columnX, cursorY, { width: columnWidth, lineBreak: true });
+            cursorY += textHeight + (item.heading ? 3 : 1.5);
+        }
     });
-    if (placed !== puzzles.length) throw new Error(`Answer layout dropped ${puzzles.length - placed} answers; refusing to write an incomplete book.`);
-  }
-
-  doc.addPage();
-  doc.font(boldFontName).fontSize(16).fillColor("#111111").text("More from MyPuzzles", area.x, area.y);
-  doc.font(bodyFontName).fontSize(10).fillColor("#222222").text(
-    [
-      "MyPuzzles builds calm, printable puzzle books across crossword, sudoku, wordsearch, kriss kross, codeword, pieceword, backwards, pathfinder and colour sudoku.",
-      "",
-      bundle.shopUrl ? `Find the rest of the series at ${bundle.shopUrl}` : "Find the rest of the series in the MyPuzzles shop.",
-      "",
-      "This book is generated content owned by MyPuzzles; please enjoy it personally rather than redistributing it."
-    ].join("\n"),
-    area.x,
-    area.y + 26,
-    { width: area.width, height: area.height - 26, ellipsis: false, lineBreak: true }
-  );
-
-  let range = doc.bufferedPageRange();
-  if (range.count % 2 !== 0) {
-    doc.addPage();
-    range = doc.bufferedPageRange();
-  }
-  for (let page = range.start; page < range.start + range.count; page += 1) {
-    doc.switchToPage(page);
-    const label = page === range.start ? "" : `MyPuzzles · ${page + 1}`;
-    if (!label) continue;
-    const bottomMargin = doc.page.margins.bottom;
+}
+function puzzleHeader(doc, puzzle, x, y, width, large) {
+    doc.font(boldFontName).fontSize(large ? 12 : 10.5).fillColor("#111111");
+    doc.text(`${puzzle.title} - ${puzzle.difficultyLabel}`, x, y, { width: width * 0.66, lineBreak: false });
+    doc.font(bodyFontName).fontSize(large ? 10 : 9).fillColor("#444444");
+    doc.text(`Puzzle ${puzzle.puzzleNumber}`, x, y + 1, { width, align: "right", lineBreak: false });
+    let cursorY = y + (large ? 18 : 15);
+    if (puzzle.prompt) {
+        doc.font(bodyFontName).fontSize(8).fillColor("#555555");
+        doc.text(puzzle.prompt, x, cursorY, { width, lineBreak: true });
+        cursorY = doc.y + 3;
+    }
+    return cursorY;
+}
+function drawPuzzleCell(doc, puzzle, area, large) {
+    const startY = puzzleHeader(doc, puzzle, area.x, area.y, area.width, large);
+    const spec = gridSpecFor(puzzle);
+    const bodyHeight = area.y + area.height - startY;
+    const extras = puzzleExtrasFor(puzzle);
+    if (puzzle.puzzleType === "pieceword") {
+        const gridSize = Math.min(bodyHeight * 0.4, area.width * 0.42);
+        const drawn = drawGrid(doc, { grid: spec.grid, x: area.x, y: startY, width: gridSize, height: gridSize, ...spec.options });
+        drawExtras(doc, extras, area.x + drawn.width + 14, startY, Math.max(area.width - drawn.width - 14, 80), bodyHeight, large ? 2 : 2, !large);
+        const piecesY = startY + drawn.height + 10;
+        if (piecesY < area.y + area.height - 40)
+            drawPiecewordPieces(doc, puzzle, area.x, piecesY, area.width, area.y + area.height - piecesY - 4);
+        return;
+    }
+    const sideBySide = area.width > 320;
+    const gridWidth = sideBySide ? area.width * 0.58 : area.width;
+    const gridHeight = Math.max(56, Math.min(sideBySide ? bodyHeight : bodyHeight - 84, gridWidth));
+    const drawn = drawGrid(doc, { grid: spec.grid, x: area.x, y: startY, width: gridWidth, height: gridHeight, ...spec.options });
+    if (sideBySide) {
+        drawExtras(doc, extras, area.x + drawn.width + 14, startY, Math.max(area.width - drawn.width - 14, 90), bodyHeight, large ? 1 : 2, !large);
+    }
+    else {
+        const extrasY = startY + drawn.height + 8;
+        drawExtras(doc, extras, area.x, extrasY, area.width, Math.max(area.y + area.height - extrasY, 0), spec.clueColumns);
+    }
+    if (puzzle.puzzleType === "colour-sudoku") {
+        const legendY = Math.min(startY + drawn.height + 6, area.y + area.height - 30);
+        drawColourLegend(doc, puzzle, area.x, legendY, area.width);
+    }
+}
+/** Answers are measured, so blocks can never overlap and none is dropped. */
+function drawAnswerPage(doc, puzzles, area, heading, pageLabel) {
+    // pdfkit inserts a page whenever text is drawn past the bottom margin. Answer
+    // content is already packed to fit, and this removes any chance of a stray
+    // pagination shifting the page references.
+    const restoreMargin = doc.page.margins.bottom;
     doc.page.margins.bottom = 0;
-    doc.font(bodyFontName).fontSize(8).fillColor("#777777");
-    doc.text(label, area.x, trim.heightPt - 22, { width: area.width, align: "center", lineBreak: false });
-    doc.page.margins.bottom = bottomMargin;
-  }
-  doc.flushPages();
-  doc.end();
-
-  return { buffer: await finished, pageMap, pageCount: range.count };
+    doc.font(boldFontName).fontSize(13).fillColor("#111111").text(heading, area.x, area.y, { width: area.width * 0.55, lineBreak: false });
+    doc.font(bodyFontName).fontSize(7.5).fillColor("#555555").text(pageLabel, area.x, area.y + 3, { width: area.width, align: "right", lineBreak: false });
+    const headerSpace = 22;
+    const perPuzzle = (area.height - headerSpace) / Math.max(1, puzzles.length);
+    let cursorY = area.y + headerSpace;
+    for (const puzzle of puzzles) {
+        const view = answerView(puzzle);
+        const blockTop = cursorY;
+        doc.font(boldFontName).fontSize(9.5).fillColor("#111111");
+        doc.text(`Puzzle ${puzzle.puzzleNumber} - ${puzzle.title} - ${puzzle.difficultyLabel}`, area.x, cursorY, { width: area.width, lineBreak: false });
+        let innerY = cursorY + 13;
+        const gridMaxWidth = view.lines.length ? area.width * 0.46 : area.width;
+        const gridBudget = Math.max(36, Math.min(perPuzzle - 26, area.height * (puzzles.length === 1 ? 0.86 : 0.4), gridMaxWidth));
+        if (view.grid) {
+            const drawn = drawGrid(doc, { grid: view.grid, x: area.x, y: innerY, width: Math.min(area.width, gridBudget), height: gridBudget, ...view.options });
+            innerY += drawn.height + 5;
+        }
+        if (view.lines.length) {
+            doc.font(bodyFontName).fontSize(8);
+            const columns = view.lines.length > 14 ? 3 : view.lines.length > 6 ? 2 : 1;
+            const columnWidth = area.width / columns - 8;
+            const buckets = balanceColumns(view.lines, columns);
+            let tallest = 0;
+            buckets.forEach((bucket, index) => {
+                const text = bucket.join("\n");
+                const height = doc.heightOfString(text, { width: columnWidth });
+                tallest = Math.max(tallest, height);
+                doc.fillColor("#222222");
+                doc.text(text, area.x + index * (columnWidth + 8), innerY, { width: columnWidth, lineBreak: true });
+            });
+            innerY += tallest + 4;
+        }
+        cursorY = Math.max(innerY + 6, blockTop + perPuzzle);
+    }
+    doc.page.margins.bottom = restoreMargin;
+}
+async function renderInterior(input, pass) {
+    const trim = bookTrimSizes[input.trimSize] ?? bookTrimSizes.A4;
+    const margin = trim.marginPt;
+    const doc = new PDFDocument({
+        size: [trim.widthPt, trim.heightPt],
+        margin,
+        autoFirstPage: false,
+        bufferPages: true,
+        compress: true,
+        info: {
+            Title: input.title,
+            Author: input.copyrightHolder ?? brandLine,
+            Subject: input.subtitle ?? "Printable puzzle book",
+            Creator: `${brandLine} book engine (${pass})`,
+            Producer: `${brandLine} book engine`,
+            Keywords: input.bookReference ? `${brandLine}, ${input.bookReference}` : brandLine,
+            CreationDate: input.generatedAt,
+            ModDate: input.generatedAt
+        }
+    });
+    registerFonts(doc);
+    const chunks = [];
+    doc.on("data", (chunk) => chunks.push(chunk));
+    const finished = new Promise((resolve) => doc.on("end", () => resolve(Buffer.concat(chunks))));
+    const area = { x: margin, y: margin, width: trim.widthPt - margin * 2, height: trim.heightPt - margin * 2 };
+    const reference = input.bookReference ?? `${brandLine.toUpperCase()}-BOOK`;
+    const copyright = input.copyrightHolder ?? "SETTIS LLC";
+    const year = input.generatedAt.getUTCFullYear();
+    const puzzles = input.puzzles.map((puzzle, index) => ({ ...puzzle, puzzleNumber: puzzle.puzzleNumber ?? index + 1 }));
+    doc.addPage();
+    doc.font(boldFontName).fontSize(27).fillColor("#111111").text(input.title, area.x, area.y + 100, { width: area.width, align: "center" });
+    if (input.subtitle)
+        doc.font(bodyFontName).fontSize(12.5).fillColor("#444444").text(input.subtitle, area.x, doc.y + 10, { width: area.width, align: "center" });
+    doc.font(bodyFontName).fontSize(10.5).fillColor("#555555").text(`${puzzles.length} puzzles - answers in the second half`, area.x, doc.y + 18, { width: area.width, align: "center" });
+    doc.font(boldFontName).fontSize(12).fillColor("#1f3d33").text(brandLine, area.x, area.y + area.height - 156, { width: area.width, align: "center" });
+    doc.font(bodyFontName).fontSize(8.5).fillColor("#666666").text([
+        `Book reference: ${reference}`,
+        `Edition: version ${input.volumeVersion} - printed edition`,
+        `(c) ${year} ${copyright}. All rights reserved.`,
+        "No part of this book may be reproduced, redistributed or resold in any form without written permission.",
+        input.shopUrl ? `Published by ${brandLine} - ${input.shopUrl}` : `Published by ${brandLine}`
+    ].join("\n"), area.x, area.y + area.height - 126, { width: area.width, align: "center", height: 118, lineBreak: true });
+    doc.addPage();
+    doc.font(boldFontName).fontSize(15).fillColor("#111111").text("How to use this book", area.x, area.y);
+    doc.font(bodyFontName).fontSize(10).fillColor("#222222").text([
+        "Every puzzle is printed with the clues or the list it needs. Work at your own pace and use a pencil if you may want a second attempt.",
+        "",
+        "Answers for every puzzle are collected in the second half of the book, in the same order as the puzzles, and each answer keeps its puzzle number.",
+        "",
+        "Difficulty rises through the book, and every puzzle page shows its difficulty next to the puzzle number.",
+        "",
+        `Book reference ${reference}. Quote it if you contact support about this edition.`
+    ].join("\n"), area.x, area.y + 24, { width: area.width, height: area.height - 24, ellipsis: false, lineBreak: true });
+    doc.addPage();
+    doc.font(boldFontName).fontSize(15).fillColor("#111111").text("Contents", area.x, area.y);
+    const byDifficulty = new Map();
+    for (const puzzle of puzzles)
+        byDifficulty.set(puzzle.difficultyLabel, (byDifficulty.get(puzzle.difficultyLabel) ?? 0) + 1);
+    doc.font(bodyFontName).fontSize(10).fillColor("#222222").text([...byDifficulty.entries()].map(([label, count]) => `${label}: ${count} puzzles`).join("\n"), area.x, area.y + 24, { width: area.width, height: area.height - 60, ellipsis: false });
+    const pages = buildPages(puzzles);
+    const pageMap = [];
+    const firstPuzzlePage = 3;
+    pages.forEach((pagePuzzles, pageIndex) => {
+        doc.addPage();
+        if (pagePuzzles.length === 1) {
+            drawPuzzleCell(doc, pagePuzzles[0], area, true);
+        }
+        else {
+            const gap = 16;
+            const half = (area.height - gap) / 2;
+            drawPuzzleCell(doc, pagePuzzles[0], { x: area.x, y: area.y, width: area.width, height: half }, false);
+            doc.moveTo(area.x, area.y + half + gap / 2).lineTo(area.x + area.width, area.y + half + gap / 2).lineWidth(0.4).strokeColor("#cccccc").stroke();
+            drawPuzzleCell(doc, pagePuzzles[1], { x: area.x, y: area.y + half + gap, width: area.width, height: half }, false);
+        }
+        for (const puzzle of pagePuzzles)
+            pageMap.push({ puzzleNumber: puzzle.puzzleNumber, pageIndex: firstPuzzlePage + pageIndex, answerPageIndex: null });
+    });
+    const answerStartIndex = firstPuzzlePage + pages.length + 1;
+    if (input.answersInBack && puzzles.length) {
+        doc.addPage();
+        doc.font(boldFontName).fontSize(24).fillColor("#111111").text("Answers", area.x, area.y + 200, { width: area.width, align: "center" });
+        doc.font(bodyFontName).fontSize(10.5).fillColor("#555555").text("The answer for each puzzle keeps its puzzle number.", area.x, doc.y + 14, { width: area.width, align: "center" });
+        doc.font(bodyFontName).fontSize(8).fillColor("#777777").text(reference, area.x, area.y + area.height - 30, { width: area.width, align: "center", lineBreak: false });
+        const groups = buildAnswerGroups(puzzles, area);
+        let placed = 0;
+        groups.forEach((answerGroup, offset) => {
+            doc.addPage();
+            drawAnswerPage(doc, answerGroup, area, "Answers", `Page ${offset + 1} of ${groups.length} - ${reference}`);
+            answerGroup.forEach((_, index) => {
+                pageMap[placed + index].answerPageIndex = answerStartIndex + offset;
+            });
+            placed += answerGroup.length;
+        });
+        if (placed !== puzzles.length)
+            throw new Error(`Answer layout dropped ${puzzles.length - placed} answers; refusing to write an incomplete book.`);
+    }
+    doc.addPage();
+    doc.font(boldFontName).fontSize(15).fillColor("#111111").text("More from MyPuzzles", area.x, area.y);
+    doc.font(bodyFontName).fontSize(10).fillColor("#222222").text([
+        "MyPuzzles builds calm, printable puzzle books across crossword, sudoku, wordsearch, kriss kross, codeword, pieceword, backwards, pathfinder and colour sudoku.",
+        "",
+        input.shopUrl ? `Find the rest of the series at ${input.shopUrl}` : "Find the rest of the series in the MyPuzzles shop.",
+        "",
+        `Book reference ${reference} - version ${input.volumeVersion}`,
+        `(c) ${year} ${copyright}. All rights reserved.`,
+        "Printed to order. Please enjoy this copy personally rather than redistributing it."
+    ].join("\n"), area.x, area.y + 24, { width: area.width, height: area.height - 24, ellipsis: false, lineBreak: true });
+    let range = doc.bufferedPageRange();
+    if (range.count % 2 !== 0) {
+        doc.addPage();
+        doc.font(bodyFontName).fontSize(9).fillColor("#999999").text("Notes", area.x, area.y, { width: area.width });
+        range = doc.bufferedPageRange();
+    }
+    for (let page = range.start; page < range.start + range.count; page += 1) {
+        doc.switchToPage(page);
+        const label = page === range.start ? `${brandLine} - ${reference}` : `${brandLine} - ${reference} - page ${page + 1}`;
+        const bottomMargin = doc.page.margins.bottom;
+        doc.page.margins.bottom = 0;
+        doc.font(bodyFontName).fontSize(7.5).fillColor("#777777");
+        doc.text(label, area.x, trim.heightPt - 20, { width: area.width, align: "center", lineBreak: false });
+        doc.page.margins.bottom = bottomMargin;
+    }
+    doc.flushPages();
+    doc.end();
+    return { buffer: await finished, pageMap, pageCount: range.count };
+}
+async function renderCover(input, pageCount) {
+    const trim = bookTrimSizes[input.trimSize] ?? bookTrimSizes.A4;
+    const bleed = 9;
+    const spineWidth = Math.max(36, pageCount * 0.162144);
+    const width = trim.widthPt * 2 + spineWidth + bleed * 2;
+    const height = trim.heightPt + bleed * 2;
+    const doc = new PDFDocument({
+        size: [width, height],
+        margin: 0,
+        autoFirstPage: false,
+        compress: true,
+        info: { Title: `${input.title} - cover`, Author: input.copyrightHolder ?? brandLine, Producer: `${brandLine} book engine`, CreationDate: input.generatedAt, ModDate: input.generatedAt }
+    });
+    registerFonts(doc);
+    const chunks = [];
+    doc.on("data", (chunk) => chunks.push(chunk));
+    const finished = new Promise((resolve) => doc.on("end", () => resolve(Buffer.concat(chunks))));
+    const reference = input.bookReference ?? `${brandLine.toUpperCase()}-BOOK`;
+    const year = input.generatedAt.getUTCFullYear();
+    doc.addPage();
+    const frontX = bleed + trim.widthPt + spineWidth;
+    const frontW = trim.widthPt;
+    doc.rect(0, 0, width, height).fill("#f7f6f2");
+    doc.rect(frontX, bleed, frontW, trim.heightPt).fill("#1f3d33");
+    doc.rect(bleed, bleed, trim.widthPt, trim.heightPt).fill("#ffffff");
+    doc.rect(bleed + trim.widthPt, bleed, spineWidth, trim.heightPt).fill("#16291f");
+    doc.font(boldFontName).fontSize(24).fillColor("#ffffff").text(input.title, frontX + 34, bleed + 116, { width: frontW - 68, lineBreak: true });
+    if (input.subtitle)
+        doc.font(bodyFontName).fontSize(11).fillColor("#d7e3dc").text(input.subtitle, frontX + 34, doc.y + 12, { width: frontW - 68 });
+    doc.font(boldFontName).fontSize(14).fillColor("#ffffff").text(`${input.puzzles.length} puzzles`, frontX + 34, bleed + trim.heightPt - 152, { width: frontW - 68 });
+    doc.font(bodyFontName).fontSize(9.5).fillColor("#d7e3dc").text("Answers in the second half - large print", frontX + 34, doc.y + 8, { width: frontW - 68 });
+    doc.font(boldFontName).fontSize(15).fillColor("#f0e6c8").text(brandLine.toUpperCase(), frontX + 34, bleed + trim.heightPt - 94, { width: frontW - 68 });
+    doc.font(bodyFontName).fontSize(8).fillColor("#c9d8cf").text(`${reference} - v${input.volumeVersion}`, frontX + 34, doc.y + 4, { width: frontW - 68 });
+    doc.save();
+    doc.translate(bleed + trim.widthPt + spineWidth / 2, bleed + trim.heightPt / 2);
+    doc.rotate(-90);
+    doc.font(boldFontName).fontSize(10.5).fillColor("#ffffff").text(`${input.title} - ${reference}`, -trim.heightPt / 2 + 24, -6, { width: trim.heightPt - 48, align: "center", lineBreak: false });
+    doc.restore();
+    doc.font(boldFontName).fontSize(14).fillColor("#11331f").text("About this book", bleed + 34, bleed + 78, { width: trim.widthPt - 68 });
+    doc.font(bodyFontName).fontSize(9.5).fillColor("#333333").text([
+        `${input.puzzles.length} large-print puzzles with the answers collected in the second half of the book.`,
+        "",
+        "Every page shows its difficulty next to the puzzle number, and the answer key keeps the same numbering.",
+        "",
+        `Book reference ${reference}.`,
+        `(c) ${year} ${input.copyrightHolder ?? "SETTIS LLC"}. All rights reserved.`,
+        input.shopUrl ? `More volumes: ${input.shopUrl}` : "More volumes in the MyPuzzles shop."
+    ].join("\n"), bleed + 34, bleed + 104, { width: trim.widthPt - 68, lineBreak: true });
+    doc.font(boldFontName).fontSize(11).fillColor("#11331f").text(`${brandLine.toUpperCase()} - ${reference}`, bleed + 34, bleed + trim.heightPt - 78, { width: trim.widthPt - 68 });
+    doc.end();
+    return finished;
+}
+export async function renderBookArtifacts(input) {
+    const digital = await renderInterior(input, "digital");
+    const print = await renderInterior(input, "print");
+    const coverPdf = await renderCover(input, digital.pageCount);
+    return {
+        digitalPdf: digital.buffer,
+        printPdf: print.buffer,
+        coverPdf,
+        pageCount: Math.max(digital.pageCount, print.pageCount),
+        pageMap: digital.pageMap
+    };
 }
 
-/** Renders a cover wrap sized to the real page count (spine included). */
-export async function renderCover(bundle, pageCount) {
-  const trim = bookTrimSizes[bundle.trimSize ?? "A4"] ?? bookTrimSizes.A4;
-  const bleed = 9;
-  const spineWidth = Math.max(36, pageCount * 0.162144);
-  const width = trim.widthPt * 2 + spineWidth + bleed * 2;
-  const height = trim.heightPt + bleed * 2;
-
-  const doc = new PDFDocument({ size: [width, height], margin: 0, autoFirstPage: false, compress: true, info: { Title: `${bundle.title ?? "Puzzle book"} — cover`, Author: bundle.author ?? "MyPuzzles", Producer: "MyPuzzles Book Studio" } });
-  registerFonts(doc);
-  const chunks = [];
-  doc.on("data", (chunk) => chunks.push(chunk));
-  const finished = new Promise((resolve) => doc.on("end", () => resolve(Buffer.concat(chunks))));
-
-  doc.addPage();
-  const frontX = bleed + trim.widthPt + spineWidth;
-  const frontW = trim.widthPt;
-  doc.rect(0, 0, width, height).fill("#f7f6f2");
-  doc.rect(frontX, bleed, frontW, trim.heightPt).fill("#1f3d33");
-  doc.rect(bleed, bleed, trim.widthPt, trim.heightPt).fill("#ffffff");
-  doc.rect(bleed + trim.widthPt, bleed, spineWidth, trim.heightPt).fill("#16291f");
-
-  doc.font(boldFontName).fontSize(26).fillColor("#ffffff").text(bundle.title ?? "Puzzle book", frontX + 36, bleed + 130, { width: frontW - 72, lineBreak: true });
-  if (bundle.subtitle) doc.font(bodyFontName).fontSize(12).fillColor("#d7e3dc").text(bundle.subtitle, frontX + 36, doc.y + 14, { width: frontW - 72 });
-  doc.font(boldFontName).fontSize(14).fillColor("#ffffff").text(`${(bundle.puzzles ?? []).length} puzzles`, frontX + 36, bleed + trim.heightPt - 150, { width: frontW - 72 });
-  doc.font(bodyFontName).fontSize(10).fillColor("#d7e3dc").text("Answers in the second half · Large print", frontX + 36, doc.y + 8, { width: frontW - 72 });
-  doc.font(boldFontName).fontSize(15).fillColor("#f0e6c8").text("MYPUZZLES", frontX + 36, bleed + trim.heightPt - 88, { width: frontW - 72 });
-
-  doc.save();
-  doc.translate(bleed + trim.widthPt + spineWidth / 2, bleed + trim.heightPt / 2);
-  doc.rotate(-90);
-  doc.font(boldFontName).fontSize(11).fillColor("#ffffff").text(`${bundle.title ?? "Puzzle book"} · MyPuzzles`, -trim.heightPt / 2 + 24, -6, { width: trim.heightPt - 48, align: "center", lineBreak: false });
-  doc.restore();
-
-  doc.font(boldFontName).fontSize(15).fillColor("#11331f").text("About this book", bleed + 36, bleed + 90, { width: trim.widthPt - 72 });
-  doc.font(bodyFontName).fontSize(10).fillColor("#333333").text(
-    [
-      `${(bundle.puzzles ?? []).length} large-print puzzles with the answers collected in the second half of the book.`,
-      "",
-      "Printed edition, version " + (bundle.volumeVersion ?? 1) + ". Generated " + new Date(bundle.generatedAt ?? Date.now()).toISOString().slice(0, 10) + ".",
-      "",
-      bundle.shopUrl ? `More volumes: ${bundle.shopUrl}` : "More volumes in the MyPuzzles shop."
-    ].join("\n"),
-    bleed + 36,
-    bleed + 120,
-    { width: trim.widthPt - 72, lineBreak: true }
-  );
-  doc.font(boldFontName).fontSize(12).fillColor("#11331f").text("MYPUZZLES", bleed + 36, bleed + trim.heightPt - 80, { width: trim.widthPt - 72 });
-
-  doc.end();
-  return finished;
-}
-
-/** Renders the whole book: interior (screen + print variants) and the cover. */
+/**
+ * Studio entry point: renders a bundle from a JSON file into the four
+ * artifacts the studio offers. Kept separate from the web app's
+ * `renderBookArtifacts` so both keep the same renderer with different calls.
+ */
 export async function renderBook(bundle) {
-  const digital = await renderInterior(bundle, { pass: "digital" });
-  const print = await renderInterior(bundle, { pass: "print" });
-  const cover = await renderCover(bundle, digital.pageCount);
-  return { digital: digital.buffer, print: print.buffer, cover, pageMap: digital.pageMap, pageCount: digital.pageCount };
+  const result = await renderBookArtifacts({
+    title: bundle.title ?? "Puzzle book",
+    subtitle: bundle.subtitle ?? null,
+    volumeVersion: bundle.volumeVersion ?? 1,
+    trimSize: bundle.trimSize ?? "A4",
+    answersInBack: bundle.answersInBack !== false,
+    bookReference: bundle.bookReference ?? null,
+    copyrightHolder: bundle.copyrightHolder ?? "SETTIS LLC",
+    puzzles: bundle.puzzles ?? [],
+    generatedAt: bundle.generatedAt ? new Date(bundle.generatedAt) : new Date(),
+    shopUrl: bundle.shopUrl ?? null
+  });
+  return {
+    digital: result.digitalPdf,
+    print: result.printPdf,
+    cover: result.coverPdf,
+    pageMap: result.pageMap,
+    pageCount: result.pageCount
+  };
 }
