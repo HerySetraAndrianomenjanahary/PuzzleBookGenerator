@@ -2,3 +2,6 @@ node_modules/
 out/
 *.log
 .DS_Store
+
+# A real book exported from the web app stays local (product content, not source).
+examples/webapp-export.json
