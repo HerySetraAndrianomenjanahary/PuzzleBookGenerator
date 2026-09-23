@@ -269,7 +269,10 @@ function sudokuAnswerRows(puzzle) {
     const raw = puzzle.solution?.[0] ?? "";
     if (!raw.includes(","))
         return null;
-    return raw.split(",").map((row) => row.split(""));
+    // A colour sudoku answer stores colour names joined by "-", a number sudoku
+    // stores one character per cell.
+    const colourful = puzzle.puzzleType === "colour-sudoku";
+    return raw.split(",").map((row) => (colourful ? row.split("-") : row.split("")));
 }
 /**
  * Assembles the solved pieceword grid from the stored piece order.
@@ -331,6 +334,39 @@ function piecewordClueBlocks(puzzle) {
     const instructions = puzzle.instructions ?? [];
     return instructions.length ? [{ heading: "How to solve", lines: instructions }] : [];
 }
+/**
+ * Codeword grid: every square holds one code number and is sized from the widest
+ * row, so a code can never run outside its box or off the page.
+ */
+function drawCodewordPuzzle(doc, puzzle, x, y, width, height) {
+    const rows = asRows(puzzle.board).map((row) => row.map((cell) => String(cell).split("-").filter(Boolean)));
+    if (!rows.length)
+        return y;
+    const wordGap = 9;
+    const squaresPerRow = Math.max(...rows.map((words) => words.reduce((total, word) => total + word.length, 0)));
+    const wordsPerRow = Math.max(...rows.map((words) => words.length));
+    const cellSize = Math.max(9, Math.min(16, (width - wordGap * wordsPerRow) / Math.max(1, squaresPerRow)));
+    const numberFont = Math.max(5, Math.min(7.5, cellSize * 0.52));
+    const rowHeight = Math.min(cellSize + 9, height / rows.length);
+    let cursorY = y;
+    rows.forEach((words) => {
+        let cursorX = x;
+        words.forEach((word) => {
+            word.forEach((number) => {
+                doc.lineWidth(0.4).strokeColor("#111111");
+                doc.rect(cursorX, cursorY, cellSize, cellSize).stroke();
+                doc.font(boldFontName).fontSize(numberFont).fillColor("#111111");
+                doc.text(number, cursorX, cursorY, { width: cellSize, height: cellSize, align: "center", valign: "center", lineBreak: false });
+                cursorX += cellSize;
+            });
+            cursorX += wordGap;
+        });
+        cursorY += rowHeight;
+    });
+    doc.font(bodyFontName).fontSize(7.5).fillColor("#666666");
+    doc.text("Every square holds one code number: write the letter it decodes to in the same square.", x, cursorY + 3, { width, lineBreak: false });
+    return cursorY + 16;
+}
 /** The shuffled 3x3 blocks a pieceword solver cuts out and places. */
 function drawPiecewordPieces(doc, puzzle, x, y, width, height) {
     const pieces = records(meta(puzzle).pieces);
@@ -339,14 +375,15 @@ function drawPiecewordPieces(doc, puzzle, x, y, width, height) {
     const gap = 10;
     // Choose the block count per row that fits both the width and the height, so
     // the cut-out sheet can never run off the page.
+    const caption = 9;
     let perRow = 6;
     let rowsCount = Math.ceil(pieces.length / perRow);
-    let pieceSize = Math.min((width - gap * (perRow - 1)) / perRow, (height - 16 - gap * (rowsCount - 1)) / rowsCount);
+    let pieceSize = Math.min((width - gap * (perRow - 1)) / perRow, (height - 16 - gap * (rowsCount - 1)) / rowsCount - caption);
     for (const candidate of [5, 4, 3]) {
         if (pieceSize >= 26)
             break;
         const rows = Math.ceil(pieces.length / candidate);
-        const size = Math.min((width - gap * (candidate - 1)) / candidate, (height - 16 - gap * (rows - 1)) / rows);
+        const size = Math.min((width - gap * (candidate - 1)) / candidate, (height - 16 - gap * (rows - 1)) / rows - caption);
         if (size > pieceSize) {
             perRow = candidate;
             rowsCount = rows;
@@ -380,7 +417,9 @@ function drawPiecewordPieces(doc, puzzle, x, y, width, height) {
                 doc.text(value, cx, cy, { width: cell, height: cell, align: "center", valign: "center", lineBreak: false });
             }
         }
-        doc.font(bodyFontName).fontSize(6).fillColor("#555555").text(`Block ${index + 1}`, originX, originY + pieceSize + 1, { width: pieceSize, align: "center", lineBreak: false });
+        if (originY + pieceSize + caption <= y + height) {
+            doc.font(bodyFontName).fontSize(6).fillColor("#555555").text(`Block ${index + 1}`, originX, originY + pieceSize + 1, { width: pieceSize, align: "center", lineBreak: false });
+        }
     });
     return cursorY + rowsCount * (pieceSize + gap) + 6;
 }
@@ -645,13 +684,34 @@ function drawPuzzleCell(doc, puzzle, area, large) {
     const spec = gridSpecFor(puzzle);
     const bodyHeight = area.y + area.height - startY;
     const extras = puzzleExtrasFor(puzzle);
+    if (puzzle.puzzleType === "codeword") {
+        const gridHeight = Math.min(bodyHeight * 0.62, 230);
+        const endY = drawCodewordPuzzle(doc, puzzle, area.x, startY, area.width, gridHeight);
+        drawExtras(doc, extras, area.x, endY + 8, area.width, Math.max(area.y + area.height - endY - 8, 0), spec.clueColumns, !large);
+        return;
+    }
+    if (puzzle.puzzleType === "codeword") {
+        const gridHeight = Math.min(bodyHeight * 0.62, 230);
+        const endY = drawCodewordPuzzle(doc, puzzle, area.x, startY, area.width, gridHeight);
+        drawExtras(doc, extras, area.x, endY + 8, area.width, Math.max(area.y + area.height - endY - 8, 0), spec.clueColumns, !large);
+        return;
+    }
     if (puzzle.puzzleType === "pieceword") {
-        const gridSize = Math.min(bodyHeight * 0.4, area.width * 0.42);
+        // Reserve the block sheet's room first, then give the clues only the space
+        // above it. Without this the clue column runs down over the cut-out blocks.
+        const pieces = records(meta(puzzle).pieces);
+        const perRow = pieces.length > 12 ? 6 : 4;
+        const sheetRows = Math.ceil(Math.max(1, pieces.length) / perRow);
+        const wantedSheet = 16 + sheetRows * 50;
+        const sheetHeight = Math.min(bodyHeight * 0.5, wantedSheet);
+        const topHeight = Math.max(bodyHeight * 0.34, bodyHeight - sheetHeight - 12);
+        const gridSize = Math.min(topHeight, area.width * 0.45);
         const drawn = drawGrid(doc, { grid: spec.grid, x: area.x, y: startY, width: gridSize, height: gridSize, ...spec.options });
-        drawExtras(doc, extras, area.x + drawn.width + 14, startY, Math.max(area.width - drawn.width - 14, 80), bodyHeight, large ? 2 : 2, !large);
-        const piecesY = startY + drawn.height + 10;
-        if (piecesY < area.y + area.height - 40)
-            drawPiecewordPieces(doc, puzzle, area.x, piecesY, area.width, area.y + area.height - piecesY - 4);
+        drawExtras(doc, extras, area.x + drawn.width + 14, startY, Math.max(area.width - drawn.width - 14, 90), topHeight, 3, true);
+        const piecesY = startY + topHeight + 10;
+        const remaining = area.y + area.height - piecesY - 2;
+        if (remaining > 40)
+            drawPiecewordPieces(doc, puzzle, area.x, piecesY, area.width, remaining);
         return;
     }
     const sideBySide = area.width > 320;
@@ -777,6 +837,7 @@ async function renderInterior(input, pass) {
     const firstPuzzlePage = 3;
     pages.forEach((pagePuzzles, pageIndex) => {
         doc.addPage();
+        const pagesBefore = doc.bufferedPageRange().count;
         if (pagePuzzles.length === 1) {
             drawPuzzleCell(doc, pagePuzzles[0], area, true);
         }
@@ -787,9 +848,20 @@ async function renderInterior(input, pass) {
             doc.moveTo(area.x, area.y + half + gap / 2).lineTo(area.x + area.width, area.y + half + gap / 2).lineWidth(0.4).strokeColor("#cccccc").stroke();
             drawPuzzleCell(doc, pagePuzzles[1], { x: area.x, y: area.y + half + gap, width: area.width, height: half }, false);
         }
+        const pagesAfter = doc.bufferedPageRange().count;
+        if (pagesAfter !== pagesBefore) {
+            throw new Error(`Puzzle ${pagePuzzles.map((puzzle) => `${puzzle.puzzleNumber} (${puzzle.puzzleType})`).join(" + ")} overflowed its page by ${pagesAfter - pagesBefore}; the layout must fit without pdfkit paginating.`);
+        }
         for (const puzzle of pagePuzzles)
             pageMap.push({ puzzleNumber: puzzle.puzzleNumber, pageIndex: firstPuzzlePage + pageIndex, answerPageIndex: null });
     });
+    // A puzzle page that overflows makes pdfkit insert a page of its own, which
+    // shifts every following reference. Fail loudly instead of shipping that.
+    const pagesAfterPuzzles = doc.bufferedPageRange().count;
+    const expectedAfterPuzzles = firstPuzzlePage + pages.length;
+    if (pagesAfterPuzzles !== expectedAfterPuzzles) {
+        throw new Error(`Puzzle pages overflowed by ${pagesAfterPuzzles - expectedAfterPuzzles} page(s); the puzzle layout must fit its pages.`);
+    }
     const answerStartIndex = firstPuzzlePage + pages.length + 1;
     if (input.answersInBack && puzzles.length) {
         doc.addPage();
@@ -806,6 +878,11 @@ async function renderInterior(input, pass) {
             });
             placed += answerGroup.length;
         });
+        const pagesAfterAnswers = doc.bufferedPageRange().count;
+        const expectedAfterAnswers = answerStartIndex + groups.length;
+        if (pagesAfterAnswers !== expectedAfterAnswers) {
+            throw new Error(`Answer pages overflowed by ${pagesAfterAnswers - expectedAfterAnswers} page(s); the answer layout must fit its pages.`);
+        }
         if (placed !== puzzles.length)
             throw new Error(`Answer layout dropped ${puzzles.length - placed} answers; refusing to write an incomplete book.`);
     }
@@ -905,9 +982,8 @@ export async function renderBookArtifacts(input) {
 }
 
 /**
- * Studio entry point: renders a bundle from a JSON file into the four
- * artifacts the studio offers. Kept separate from the web app's
- * `renderBookArtifacts` so both keep the same renderer with different calls.
+ * Studio entry point: renders a bundle from a JSON file into the four artifacts
+ * the studio offers, using the same renderer as the web app.
  */
 export async function renderBook(bundle) {
   const result = await renderBookArtifacts({
@@ -922,11 +998,5 @@ export async function renderBook(bundle) {
     generatedAt: bundle.generatedAt ? new Date(bundle.generatedAt) : new Date(),
     shopUrl: bundle.shopUrl ?? null
   });
-  return {
-    digital: result.digitalPdf,
-    print: result.printPdf,
-    cover: result.coverPdf,
-    pageMap: result.pageMap,
-    pageCount: result.pageCount
-  };
+  return { digital: result.digitalPdf, print: result.printPdf, cover: result.coverPdf, pageMap: result.pageMap, pageCount: result.pageCount };
 }
