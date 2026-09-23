@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MyPuzzles Book Studio</title>
+<style>
+  :root { --pine:#1f3d33; --sage:#cfe3d8; --coral:#e2725b; --ink:#20242a; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background:#f7f6f2; color:var(--ink); }
+  header { background:var(--pine); color:#fff; padding:22px 26px; }
+  header h1 { margin:0; font-size:22px; letter-spacing:-0.01em; }
+  header p { margin:6px 0 0; font-size:13px; opacity:.85; }
+  main { max-width:1080px; margin:0 auto; padding:22px 18px 60px; }
+  .grid { display:grid; gap:16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+  section { background:#fff; border-radius:18px; padding:18px; box-shadow:0 10px 30px rgba(20,30,25,.08); }
+  h2 { margin:0 0 8px; font-size:16px; }
+  p.hint { margin:0 0 12px; font-size:12px; color:#5c6b64; }
+  button { background:var(--pine); color:#fff; border:0; border-radius:12px; padding:10px 16px; font-weight:700; font-size:13px; cursor:pointer; }
+  button.secondary { background:#fff; color:var(--pine); box-shadow:0 6px 18px rgba(20,30,25,.10); }
+  button:disabled { opacity:.5; cursor:default; }
+  input[type=file], select, input[type=text] { font:inherit; font-size:13px; padding:8px 10px; border:1px solid #d9dfdb; border-radius:10px; background:#fff; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  pre { background:#0f1a16; color:#d8e6df; padding:12px; border-radius:12px; overflow:auto; font-size:12px; max-height:280px; }
+  .ok { color:#1c7a4a; font-weight:700; } .warn { color:#b45309; font-weight:700; }
+  .files a { display:inline-block; margin:4px 8px 0 0; background:var(--sage); color:var(--pine); text-decoration:none; padding:8px 12px; border-radius:10px; font-weight:700; font-size:12px; }
+  iframe { width:100%; height:420px; border:1px solid #e5e9e6; border-radius:12px; background:#eef1ef; }
+  .status { font-size:12px; color:#5c6b64; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MyPuzzles Book Studio</h1>
+  <p>Local book generator · render puzzle books, check print files, pack for a printer. Nothing leaves this machine.</p>
+</header>
+<main>
+  <div class="grid">
+    <section>
+      <h2>1 · Render a book from a bundle</h2>
+      <p class="hint">A bundle is the JSON exported by the MyPuzzles web app (book engine → export bundle) or hand-written. See examples/sample-bundle.json.</p>
+      <div class="row">
+        <input type="file" id="bundleFile" accept="application/json" />
+        <select id="trimSize"></select>
+        <button id="renderBtn">Render book</button>
+      </div>
+      <p class="status" id="renderStatus"></p>
+      <div class="files" id="renderFiles"></div>
+      <pre id="renderReport" hidden></pre>
+    </section>
+
+    <section>
+      <h2>2 · Inspect or verify an existing PDF</h2>
+      <p class="hint">Check page count, page size and even-page count before sending a file to a printer.</p>
+      <div class="row">
+        <input type="file" id="pdfFile" accept="application/pdf" />
+        <button id="verifyBtn">Verify</button>
+      </div>
+      <p class="status" id="verifyStatus"></p>
+      <pre id="verifyReport" hidden></pre>
+      <iframe id="pdfPreview" hidden></iframe>
+    </section>
+
+    <section>
+      <h2>3 · Pack for printing</h2>
+      <p class="hint">Join the interior and the cover wrap into the single file a printer expects, or merge any PDFs you have.</p>
+      <div class="row">
+        <input type="file" id="interiorFile" accept="application/pdf" />
+        <input type="file" id="coverFile" accept="application/pdf" />
+        <button id="packBtn">Build print pack</button>
+      </div>
+      <p class="status" id="packStatus"></p>
+      <div class="files" id="packFiles"></div>
+    </section>
+  </div>
+</main>
+<script>
+const readFileAsBase64 = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = () => resolve(String(reader.result).split(",")[1] ?? "");
+  reader.onerror = reject;
+  reader.readAsDataURL(file);
+});
+const readFileAsText = (file) => file.text();
+const setStatus = (id, text, kind) => { const el = document.getElementById(id); el.textContent = text; el.className = "status " + (kind ?? ""); };
+
+fetch("/api/trim-sizes").then((response) => response.json()).then((data) => {
+  const select = document.getElementById("trimSize");
+  for (const size of data.trimSizes) {
+    const option = document.createElement("option");
+    option.value = size.id;
+    option.textContent = size.label;
+    select.appendChild(option);
+  }
+});
+
+document.getElementById("renderBtn").addEventListener("click", async () => {
+  const file = document.getElementById("bundleFile").files[0];
+  if (!file) { setStatus("renderStatus", "Choose a bundle JSON first.", "warn"); return; }
+  setStatus("renderStatus", "Rendering…");
+  document.getElementById("renderFiles").innerHTML = "";
+  try {
+    const bundle = JSON.parse(await readFileAsText(file));
+    const trimSize = document.getElementById("trimSize").value;
+    const response = await fetch("/api/render", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ bundle, trimSize }) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Render failed.");
+    setStatus("renderStatus", `Rendered ${data.summary.puzzles} puzzles · ${data.pageCount} pages.`, "ok");
+    const report = document.getElementById("renderReport");
+    report.hidden = false;
+    report.textContent = JSON.stringify(data.summary, null, 2);
+    const files = document.getElementById("renderFiles");
+    for (const [label, href] of Object.entries(data.files)) {
+      const link = document.createElement("a");
+      link.href = href;
+      link.textContent = label;
+      files.appendChild(link);
+    }
+  } catch (error) {
+    setStatus("renderStatus", error.message, "warn");
+  }
+});
+
+document.getElementById("verifyBtn").addEventListener("click", async () => {
+  const file = document.getElementById("pdfFile").files[0];
+  if (!file) { setStatus("verifyStatus", "Choose a PDF first.", "warn"); return; }
+  setStatus("verifyStatus", "Checking…");
+  try {
+    const base64 = await readFileAsBase64(file);
+    const response = await fetch("/api/inspect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ base64 }) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Could not read the PDF.");
+    const report = document.getElementById("verifyReport");
+    report.hidden = false;
+    report.textContent = JSON.stringify(data, null, 2);
+    setStatus("verifyStatus", data.pass ? "Ready to print." : "Attention needed — see the report.", data.pass ? "ok" : "warn");
+    const frame = document.getElementById("pdfPreview");
+    frame.hidden = false;
+    frame.src = URL.createObjectURL(file);
+  } catch (error) {
+    setStatus("verifyStatus", error.message, "warn");
+  }
+});
+
+document.getElementById("packBtn").addEventListener("click", async () => {
+  const interior = document.getElementById("interiorFile").files[0];
+  const cover = document.getElementById("coverFile").files[0];
+  if (!interior) { setStatus("packStatus", "Choose the interior PDF first.", "warn"); return; }
+  setStatus("packStatus", "Packing…");
+  document.getElementById("packFiles").innerHTML = "";
+  try {
+    const payload = { interior: await readFileAsBase64(interior), cover: cover ? await readFileAsBase64(cover) : null, title: interior.name.replace(/\.pdf$/i, "") };
+    const response = await fetch("/api/pack", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "Pack failed.");
+    setStatus("packStatus", `Print pack ready · ${data.pageCount} pages.`, "ok");
+    const link = document.createElement("a");
+    link.href = data.file;
+    link.textContent = "download print pack";
+    document.getElementById("packFiles").appendChild(link);
+  } catch (error) {
+    setStatus("packStatus", error.message, "warn");
+  }
+});
+</script>
+</body>
+</html>

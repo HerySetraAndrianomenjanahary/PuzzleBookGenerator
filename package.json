@@ -1,0 +1,26 @@
+{
+  "name": "mypuzzles-book-studio",
+  "version": "1.0.0",
+  "private": false,
+  "description": "Local MyPuzzles printable book studio: render puzzle books, import and export print-ready PDFs, and prepare files for a printer.",
+  "type": "module",
+  "bin": {
+    "mypuzzles-books": "./src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/cli.js serve",
+    "render": "node src/cli.js render",
+    "inspect": "node src/cli.js inspect",
+    "verify": "node src/cli.js verify",
+    "pack": "node src/cli.js pack",
+    "selftest": "node src/cli.js selftest"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "pdf-lib": "^1.17.1",
+    "pdfkit": "^0.20.2"
+  },
+  "license": "UNLICENSED"
+}

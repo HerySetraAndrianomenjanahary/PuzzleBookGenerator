@@ -1,0 +1,1287 @@
+{
+  "title": "Sample Puzzle Book",
+  "subtitle": "Sudoku, Wordsearch and Codeword · Answers in the second half",
+  "author": "MyPuzzles",
+  "volumeVersion": 1,
+  "trimSize": "A4",
+  "answersInBack": true,
+  "generatedAt": "2026-09-23T12:31:16.604Z",
+  "shopUrl": "mypuzzles.app/shop",
+  "puzzles": [
+    {
+      "puzzleNumber": 1,
+      "puzzleType": "sudoku",
+      "difficulty": "easy",
+      "title": "Sudoku",
+      "difficultyLabel": "Easy",
+      "board": [
+        [
+          "3",
+          "8",
+          ".",
+          ".",
+          ".",
+          ".",
+          "2",
+          "1",
+          "."
+        ],
+        [
+          "5",
+          "6",
+          ".",
+          "8",
+          "9",
+          "1",
+          ".",
+          "4",
+          "7"
+        ],
+        [
+          "9",
+          "7",
+          "1",
+          "3",
+          "4",
+          "2",
+          ".",
+          "5",
+          "."
+        ],
+        [
+          ".",
+          ".",
+          ".",
+          "4",
+          ".",
+          ".",
+          ".",
+          ".",
+          "5"
+        ],
+        [
+          "6",
+          ".",
+          ".",
+          "2",
+          ".",
+          "3",
+          "4",
+          "7",
+          "1"
+        ],
+        [
+          "4",
+          "1",
+          "7",
+          ".",
+          "5",
+          ".",
+          "8",
+          ".",
+          "."
+        ],
+        [
+          ".",
+          "2",
+          ".",
+          "5",
+          "6",
+          "9",
+          ".",
+          ".",
+          "."
+        ],
+        [
+          "7",
+          "4",
+          ".",
+          ".",
+          "2",
+          ".",
+          "5",
+          "3",
+          "."
+        ],
+        [
+          ".",
+          ".",
+          ".",
+          "7",
+          ".",
+          ".",
+          ".",
+          "9",
+          "."
+        ]
+      ],
+      "prompt": "Complete the 9x9 Sudoku grid.",
+      "instructions": [
+        "Givens: 42. Rows, columns, and 3x3 boxes must contain each symbol once.",
+        "Use keyboard digits or the number pad for empty cells."
+      ],
+      "metadata": {
+        "kind": "sudoku",
+        "givens": 42,
+        "minGivens": 40,
+        "maxGivens": 45,
+        "requireUniqueSolution": true,
+        "colors": [
+          {
+            "name": "RED",
+            "value": "1",
+            "hex": "#ef6f61"
+          },
+          {
+            "name": "BLUE",
+            "value": "2",
+            "hex": "#4f8fd7"
+          },
+          {
+            "name": "GOLD",
+            "value": "3",
+            "hex": "#f4bd45"
+          },
+          {
+            "name": "GREEN",
+            "value": "4",
+            "hex": "#5ca96b"
+          },
+          {
+            "name": "ROSE",
+            "value": "5",
+            "hex": "#f39ab5"
+          },
+          {
+            "name": "TEAL",
+            "value": "6",
+            "hex": "#40a6a4"
+          },
+          {
+            "name": "VIOLET",
+            "value": "7",
+            "hex": "#8d6ee8"
+          },
+          {
+            "name": "WHITE",
+            "value": "8",
+            "hex": "#f8f6ed"
+          },
+          {
+            "name": "BLACK",
+            "value": "9",
+            "hex": "#253044"
+          }
+        ]
+      },
+      "solution": [
+        "384675219,562891347,971342658,238417965,695283471,417956823,123569784,749128536,856734192"
+      ]
+    },
+    {
+      "puzzleNumber": 2,
+      "puzzleType": "sudoku",
+      "difficulty": "normal",
+      "title": "Sudoku",
+      "difficultyLabel": "Normal",
+      "board": [
+        [
+          ".",
+          "4",
+          "1",
+          ".",
+          ".",
+          "7",
+          "2",
+          ".",
+          "."
+        ],
+        [
+          ".",
+          ".",
+          "8",
+          "4",
+          ".",
+          "6",
+          ".",
+          "3",
+          "."
+        ],
+        [
+          "7",
+          ".",
+          ".",
+          "2",
+          ".",
+          "9",
+          "8",
+          "4",
+          "6"
+        ],
+        [
+          "5",
+          "8",
+          ".",
+          ".",
+          ".",
+          "1",
+          ".",
+          ".",
+          "."
+        ],
+        [
+          ".",
+          "9",
+          ".",
+          ".",
+          ".",
+          "3",
+          ".",
+          "8",
+          "4"
+        ],
+        [
+          ".",
+          ".",
+          ".",
+          ".",
+          "8",
+          ".",
+          ".",
+          ".",
+          "."
+        ],
+        [
+          "8",
+          "7",
+          ".",
+          "1",
+          ".",
+          "5",
+          "4",
+          ".",
+          "9"
+        ],
+        [
+          "4",
+          ".",
+          ".",
+          ".",
+          ".",
+          ".",
+          ".",
+          ".",
+          "8"
+        ],
+        [
+          "2",
+          ".",
+          "9",
+          "3",
+          ".",
+          ".",
+          "6",
+          ".",
+          "1"
+        ]
+      ],
+      "prompt": "Complete the 9x9 Sudoku grid.",
+      "instructions": [
+        "Givens: 35. Rows, columns, and 3x3 boxes must contain each symbol once.",
+        "Use keyboard digits or the number pad for empty cells."
+      ],
+      "metadata": {
+        "kind": "sudoku",
+        "givens": 35,
+        "minGivens": 32,
+        "maxGivens": 39,
+        "requireUniqueSolution": true,
+        "colors": [
+          {
+            "name": "RED",
+            "value": "1",
+            "hex": "#ef6f61"
+          },
+          {
+            "name": "BLUE",
+            "value": "2",
+            "hex": "#4f8fd7"
+          },
+          {
+            "name": "GOLD",
+            "value": "3",
+            "hex": "#f4bd45"
+          },
+          {
+            "name": "GREEN",
+            "value": "4",
+            "hex": "#5ca96b"
+          },
+          {
+            "name": "ROSE",
+            "value": "5",
+            "hex": "#f39ab5"
+          },
+          {
+            "name": "TEAL",
+            "value": "6",
+            "hex": "#40a6a4"
+          },
+          {
+            "name": "VIOLET",
+            "value": "7",
+            "hex": "#8d6ee8"
+          },
+          {
+            "name": "WHITE",
+            "value": "8",
+            "hex": "#f8f6ed"
+          },
+          {
+            "name": "BLACK",
+            "value": "9",
+            "hex": "#253044"
+          }
+        ]
+      },
+      "solution": [
+        "641837295,928456137,735219846,584921763,192673584,367584912,873165429,416792358,259348671"
+      ]
+    },
+    {
+      "puzzleNumber": 3,
+      "puzzleType": "wordsearch",
+      "difficulty": "easy",
+      "title": "Wordsearch",
+      "difficultyLabel": "Easy",
+      "board": [
+        [
+          "W",
+          "Y",
+          "O",
+          "N",
+          "D",
+          "E",
+          "R",
+          "N",
+          "X",
+          "J"
+        ],
+        [
+          "I",
+          "A",
+          "S",
+          "R",
+          "W",
+          "S",
+          "P",
+          "M",
+          "L",
+          "A"
+        ],
+        [
+          "L",
+          "F",
+          "K",
+          "H",
+          "C",
+          "M",
+          "F",
+          "J",
+          "X",
+          "V"
+        ],
+        [
+          "L",
+          "J",
+          "B",
+          "T",
+          "B",
+          "H",
+          "Y",
+          "R",
+          "M",
+          "F"
+        ],
+        [
+          "O",
+          "L",
+          "A",
+          "N",
+          "E",
+          "W",
+          "A",
+          "Y",
+          "O",
+          "H"
+        ],
+        [
+          "W",
+          "S",
+          "H",
+          "E",
+          "L",
+          "T",
+          "E",
+          "R",
+          "I",
+          "A"
+        ],
+        [
+          "S",
+          "U",
+          "M",
+          "M",
+          "I",
+          "T",
+          "E",
+          "D",
+          "D",
+          "E"
+        ],
+        [
+          "S",
+          "P",
+          "V",
+          "H",
+          "R",
+          "S",
+          "D",
+          "T",
+          "H",
+          "I"
+        ],
+        [
+          "S",
+          "Q",
+          "X",
+          "M",
+          "T",
+          "E",
+          "Q",
+          "G",
+          "I",
+          "W"
+        ],
+        [
+          "Q",
+          "L",
+          "T",
+          "J",
+          "N",
+          "E",
+          "J",
+          "U",
+          "N",
+          "C"
+        ]
+      ],
+      "prompt": "Find the hidden words by tracing straight paths in the letter grid.",
+      "instructions": [
+        "Grid: 10x10. Words may run right, down-right, down-left, down.",
+        "Drag across letters or click a start and end cell to mark words."
+      ],
+      "metadata": {
+        "kind": "wordsearch",
+        "size": 10,
+        "rows": 10,
+        "columns": 10,
+        "targets": [
+          {
+            "id": "word-1",
+            "word": "LANEWAY",
+            "length": 7
+          },
+          {
+            "id": "word-2",
+            "word": "ORCHARD",
+            "length": 7
+          },
+          {
+            "id": "word-3",
+            "word": "SHELTER",
+            "length": 7
+          },
+          {
+            "id": "word-4",
+            "word": "FOREST",
+            "length": 6
+          },
+          {
+            "id": "word-5",
+            "word": "HIDDEN",
+            "length": 6
+          },
+          {
+            "id": "word-6",
+            "word": "SUMMIT",
+            "length": 6
+          },
+          {
+            "id": "word-7",
+            "word": "WILLOW",
+            "length": 6
+          },
+          {
+            "id": "word-8",
+            "word": "YONDER",
+            "length": 6
+          }
+        ],
+        "directions": [
+          "right",
+          "down-right",
+          "down-left",
+          "down"
+        ],
+        "directionCounts": {
+          "right": 4,
+          "down-right": 1,
+          "down-left": 2,
+          "down": 1
+        },
+        "directionFamilyCounts": {
+          "horizontalForward": 4,
+          "verticalForward": 1,
+          "diagonalForward": 3,
+          "horizontalBackward": 0,
+          "verticalBackward": 0,
+          "diagonalBackward": 0
+        },
+        "directionTargets": {
+          "horizontalForward": 3,
+          "verticalForward": 2,
+          "diagonalForward": 3,
+          "horizontalBackward": 0,
+          "verticalBackward": 0,
+          "diagonalBackward": 0
+        },
+        "directionLabelTargets": {
+          "right": 3,
+          "down": 2,
+          "down-right": 1,
+          "down-left": 2
+        },
+        "generationDiagnostics": {
+          "targetWordCount": 8,
+          "placedWordCount": 8,
+          "placementRate": 1,
+          "totalCrossings": 4,
+          "crossedWordCount": 4,
+          "isolatedWordCount": 4,
+          "averageCrossingsPerWord": 0.5,
+          "diagonalWordCount": 3,
+          "nodes": 9,
+          "backtracks": 0,
+          "durationMs": 6
+        }
+      },
+      "solution": [
+        "wordsearch|word-1|LANEWAY|4,1;4,2;4,3;4,4;4,5;4,6;4,7|0,1",
+        "wordsearch|word-2|ORCHARD|0,2;1,3;2,4;3,5;4,6;5,7;6,8|1,1",
+        "wordsearch|word-3|SHELTER|5,1;5,2;5,3;5,4;5,5;5,6;5,7|0,1",
+        "wordsearch|word-4|FOREST|3,9;4,8;5,7;6,6;7,5;8,4|1,-1",
+        "wordsearch|word-5|HIDDEN|4,9;5,8;6,7;7,6;8,5;9,4|1,-1",
+        "wordsearch|word-6|SUMMIT|6,0;6,1;6,2;6,3;6,4;6,5|0,1",
+        "wordsearch|word-7|WILLOW|0,0;1,0;2,0;3,0;4,0;5,0|1,0",
+        "wordsearch|word-8|YONDER|0,1;0,2;0,3;0,4;0,5;0,6|0,1"
+      ]
+    },
+    {
+      "puzzleNumber": 4,
+      "puzzleType": "wordsearch",
+      "difficulty": "normal",
+      "title": "Wordsearch",
+      "difficultyLabel": "Normal",
+      "board": [
+        [
+          "E",
+          "V",
+          "J",
+          "A",
+          "X",
+          "E",
+          "V",
+          "D",
+          "H",
+          "S",
+          "L",
+          "Q"
+        ],
+        [
+          "Q",
+          "L",
+          "S",
+          "A",
+          "F",
+          "F",
+          "R",
+          "O",
+          "N",
+          "A",
+          "J",
+          "T"
+        ],
+        [
+          "Z",
+          "G",
+          "D",
+          "F",
+          "P",
+          "A",
+          "H",
+          "V",
+          "Y",
+          "C",
+          "H",
+          "C"
+        ],
+        [
+          "M",
+          "U",
+          "W",
+          "N",
+          "H",
+          "D",
+          "L",
+          "F",
+          "J",
+          "A",
+          "Q",
+          "F"
+        ],
+        [
+          "V",
+          "M",
+          "X",
+          "C",
+          "A",
+          "C",
+          "A",
+          "H",
+          "B",
+          "S",
+          "G",
+          "Q"
+        ],
+        [
+          "M",
+          "E",
+          "R",
+          "N",
+          "M",
+          "C",
+          "T",
+          "I",
+          "P",
+          "T",
+          "L",
+          "E"
+        ],
+        [
+          "H",
+          "O",
+          "E",
+          "Q",
+          "U",
+          "A",
+          "T",
+          "O",
+          "R",
+          "L",
+          "W",
+          "O"
+        ],
+        [
+          "S",
+          "C",
+          "Z",
+          "Q",
+          "R",
+          "A",
+          "I",
+          "W",
+          "X",
+          "E",
+          "N",
+          "O"
+        ],
+        [
+          "R",
+          "S",
+          "E",
+          "J",
+          "T",
+          "N",
+          "C",
+          "L",
+          "K",
+          "L",
+          "B",
+          "X"
+        ],
+        [
+          "T",
+          "E",
+          "E",
+          "M",
+          "Z",
+          "Y",
+          "E",
+          "L",
+          "L",
+          "A",
+          "V",
+          "O"
+        ],
+        [
+          "S",
+          "M",
+          "R",
+          "C",
+          "N",
+          "P",
+          "S",
+          "D",
+          "S",
+          "A",
+          "Z",
+          "H"
+        ],
+        [
+          "Z",
+          "G",
+          "B",
+          "V",
+          "R",
+          "J",
+          "O",
+          "V",
+          "T",
+          "E",
+          "R",
+          "J"
+        ]
+      ],
+      "prompt": "Find the hidden words by tracing straight paths in the letter grid.",
+      "instructions": [
+        "Grid: 12x12. Words may run right, down-left, down, up-right, up, up-left, left, down-right.",
+        "Drag across letters or click a start and end cell to mark words."
+      ],
+      "metadata": {
+        "kind": "wordsearch",
+        "size": 12,
+        "rows": 12,
+        "columns": 12,
+        "targets": [
+          {
+            "id": "word-1",
+            "word": "EQUATOR",
+            "length": 7
+          },
+          {
+            "id": "word-2",
+            "word": "HABITAT",
+            "length": 7
+          },
+          {
+            "id": "word-3",
+            "word": "LATTICE",
+            "length": 7
+          },
+          {
+            "id": "word-4",
+            "word": "ORCHARD",
+            "length": 7
+          },
+          {
+            "id": "word-5",
+            "word": "SAFFRON",
+            "length": 7
+          },
+          {
+            "id": "word-6",
+            "word": "BREEZE",
+            "length": 6
+          },
+          {
+            "id": "word-7",
+            "word": "CANDLE",
+            "length": 6
+          },
+          {
+            "id": "word-8",
+            "word": "CASTLE",
+            "length": 6
+          },
+          {
+            "id": "word-9",
+            "word": "VALLEY",
+            "length": 6
+          },
+          {
+            "id": "word-10",
+            "word": "VOYAGE",
+            "length": 6
+          }
+        ],
+        "directions": [
+          "right",
+          "down-left",
+          "down",
+          "up-right",
+          "up",
+          "up-left",
+          "left",
+          "down-right"
+        ],
+        "directionCounts": {
+          "right": 2,
+          "down-left": 1,
+          "down": 2,
+          "up-right": 1,
+          "up": 1,
+          "up-left": 1,
+          "left": 1,
+          "down-right": 1
+        },
+        "directionFamilyCounts": {
+          "horizontalForward": 2,
+          "verticalForward": 2,
+          "diagonalForward": 2,
+          "horizontalBackward": 1,
+          "verticalBackward": 1,
+          "diagonalBackward": 2
+        },
+        "directionTargets": {
+          "horizontalForward": 2,
+          "verticalForward": 2,
+          "diagonalForward": 2,
+          "horizontalBackward": 1,
+          "verticalBackward": 1,
+          "diagonalBackward": 2
+        },
+        "directionLabelTargets": {
+          "right": 2,
+          "left": 1,
+          "down": 2,
+          "up": 1,
+          "down-right": 1,
+          "down-left": 1,
+          "up-right": 1,
+          "up-left": 1
+        },
+        "generationDiagnostics": {
+          "targetWordCount": 10,
+          "placedWordCount": 10,
+          "placementRate": 1,
+          "totalCrossings": 8,
+          "crossedWordCount": 7,
+          "isolatedWordCount": 3,
+          "averageCrossingsPerWord": 0.8,
+          "diagonalWordCount": 4,
+          "nodes": 55,
+          "backtracks": 0,
+          "durationMs": 134
+        }
+      },
+      "solution": [
+        "wordsearch|word-1|EQUATOR|6,2;6,3;6,4;6,5;6,6;6,7;6,8|0,1",
+        "wordsearch|word-2|HABITAT|2,10;3,9;4,8;5,7;6,6;7,5;8,4|1,-1",
+        "wordsearch|word-3|LATTICE|3,6;4,6;5,6;6,6;7,6;8,6;9,6|1,0",
+        "wordsearch|word-4|ORCHARD|6,1;5,2;4,3;3,4;2,5;1,6;0,7|-1,1",
+        "wordsearch|word-5|SAFFRON|1,2;1,3;1,4;1,5;1,6;1,7;1,8|0,1",
+        "wordsearch|word-6|BREEZE|11,2;10,2;9,2;8,2;7,2;6,2|-1,0",
+        "wordsearch|word-7|CANDLE|5,5;4,4;3,3;2,2;1,1;0,0|-1,-1",
+        "wordsearch|word-8|CASTLE|2,9;3,9;4,9;5,9;6,9;7,9|1,0",
+        "wordsearch|word-9|VALLEY|9,10;9,9;9,8;9,7;9,6;9,5|0,-1",
+        "wordsearch|word-10|VOYAGE|0,6;1,7;2,8;3,9;4,10;5,11|1,1"
+      ]
+    },
+    {
+      "puzzleNumber": 5,
+      "puzzleType": "codeword",
+      "difficulty": "easy",
+      "title": "Codeword",
+      "difficultyLabel": "Easy",
+      "board": [
+        [
+          "23-13-17-09-06-05",
+          "07-06-02-24-13-05"
+        ],
+        [
+          "02-25-13-07-06-05",
+          "25-26-17-24-06-05-17"
+        ],
+        [
+          "09-10-26-15-05-26-01",
+          "24-26-17-15-06-17-24"
+        ],
+        [
+          "24-18-05-06-26-09"
+        ]
+      ],
+      "prompt": "Decode the number-letter mapping and reveal the hidden words.",
+      "instructions": [
+        "Revealed letters: 5=R, 25=L, 7=V, 24=T, 6=E, 2=C, 26=A.",
+        "Submit decoded words in row order."
+      ],
+      "metadata": {
+        "kind": "codeword",
+        "width": 2,
+        "height": 4,
+        "encodedWords": [
+          {
+            "id": "codeword-1",
+            "number": 1,
+            "numbers": [
+              23,
+              13,
+              17,
+              9,
+              6,
+              5
+            ]
+          },
+          {
+            "id": "codeword-2",
+            "number": 2,
+            "numbers": [
+              7,
+              6,
+              2,
+              24,
+              13,
+              5
+            ]
+          },
+          {
+            "id": "codeword-3",
+            "number": 3,
+            "numbers": [
+              2,
+              25,
+              13,
+              7,
+              6,
+              5
+            ]
+          },
+          {
+            "id": "codeword-4",
+            "number": 4,
+            "numbers": [
+              25,
+              26,
+              17,
+              24,
+              6,
+              5,
+              17
+            ]
+          },
+          {
+            "id": "codeword-5",
+            "number": 5,
+            "numbers": [
+              9,
+              10,
+              26,
+              15,
+              5,
+              26,
+              1
+            ]
+          },
+          {
+            "id": "codeword-6",
+            "number": 6,
+            "numbers": [
+              24,
+              26,
+              17,
+              15,
+              6,
+              17,
+              24
+            ]
+          },
+          {
+            "id": "codeword-7",
+            "number": 7,
+            "numbers": [
+              24,
+              18,
+              5,
+              6,
+              26,
+              9
+            ]
+          }
+        ],
+        "revealed": [
+          {
+            "number": 5,
+            "letter": "R"
+          },
+          {
+            "number": 25,
+            "letter": "L"
+          },
+          {
+            "number": 7,
+            "letter": "V"
+          },
+          {
+            "number": 24,
+            "letter": "T"
+          },
+          {
+            "number": 6,
+            "letter": "E"
+          },
+          {
+            "number": 2,
+            "letter": "C"
+          },
+          {
+            "number": 26,
+            "letter": "A"
+          }
+        ],
+        "numbers": [
+          1,
+          2,
+          5,
+          6,
+          7,
+          9,
+          10,
+          13,
+          15,
+          17,
+          18,
+          23,
+          24,
+          25,
+          26
+        ]
+      },
+      "solution": [
+        "YONDER",
+        "VECTOR",
+        "CLOVER",
+        "LANTERN",
+        "DIAGRAM",
+        "TANGENT",
+        "THREAD"
+      ]
+    },
+    {
+      "puzzleNumber": 6,
+      "puzzleType": "codeword",
+      "difficulty": "normal",
+      "title": "Codeword",
+      "difficultyLabel": "Normal",
+      "board": [
+        [
+          "08-24-26-19-03-05-18",
+          "20-05-24-08-01-06-04-17-03",
+          "20-15-23-23-18-04"
+        ],
+        [
+          "08-05-17-16-18-04",
+          "12-19-18-05-17-16",
+          "13-04-18-21-08-12-03-26"
+        ],
+        [
+          "18-12-09-24-05-24-26",
+          "09-05-18-05-17-08-04",
+          "09-15-03-03-21-17"
+        ]
+      ],
+      "prompt": "Decode the number-letter mapping and reveal the hidden words.",
+      "instructions": [
+        "Revealed letters: 3=T, 18=L, 1=H, 21=O, 26=Y.",
+        "Submit decoded words in row order."
+      ],
+      "metadata": {
+        "kind": "codeword",
+        "width": 3,
+        "height": 3,
+        "encodedWords": [
+          {
+            "id": "codeword-1",
+            "number": 1,
+            "numbers": [
+              8,
+              24,
+              26,
+              19,
+              3,
+              5,
+              18
+            ]
+          },
+          {
+            "id": "codeword-2",
+            "number": 2,
+            "numbers": [
+              20,
+              5,
+              24,
+              8,
+              1,
+              6,
+              4,
+              17,
+              3
+            ]
+          },
+          {
+            "id": "codeword-3",
+            "number": 3,
+            "numbers": [
+              20,
+              15,
+              23,
+              23,
+              18,
+              4
+            ]
+          },
+          {
+            "id": "codeword-4",
+            "number": 4,
+            "numbers": [
+              8,
+              5,
+              17,
+              16,
+              18,
+              4
+            ]
+          },
+          {
+            "id": "codeword-5",
+            "number": 5,
+            "numbers": [
+              12,
+              19,
+              18,
+              5,
+              17,
+              16
+            ]
+          },
+          {
+            "id": "codeword-6",
+            "number": 6,
+            "numbers": [
+              13,
+              4,
+              18,
+              21,
+              8,
+              12,
+              3,
+              26
+            ]
+          },
+          {
+            "id": "codeword-7",
+            "number": 7,
+            "numbers": [
+              18,
+              12,
+              9,
+              24,
+              5,
+              24,
+              26
+            ]
+          },
+          {
+            "id": "codeword-8",
+            "number": 8,
+            "numbers": [
+              9,
+              5,
+              18,
+              5,
+              17,
+              8,
+              4
+            ]
+          },
+          {
+            "id": "codeword-9",
+            "number": 9,
+            "numbers": [
+              9,
+              15,
+              3,
+              3,
+              21,
+              17
+            ]
+          }
+        ],
+        "revealed": [
+          {
+            "number": 3,
+            "letter": "T"
+          },
+          {
+            "number": 18,
+            "letter": "L"
+          },
+          {
+            "number": 1,
+            "letter": "H"
+          },
+          {
+            "number": 21,
+            "letter": "O"
+          },
+          {
+            "number": 26,
+            "letter": "Y"
+          }
+        ],
+        "numbers": [
+          1,
+          3,
+          4,
+          5,
+          6,
+          8,
+          9,
+          12,
+          13,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          23,
+          24,
+          26
+        ]
+      },
+      "solution": [
+        "CRYSTAL",
+        "PARCHMENT",
+        "PUZZLE",
+        "CANDLE",
+        "ISLAND",
+        "VELOCITY",
+        "LIBRARY",
+        "BALANCE",
+        "BUTTON"
+      ]
+    }
+  ]
+}
