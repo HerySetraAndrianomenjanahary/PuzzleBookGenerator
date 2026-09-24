@@ -1053,7 +1053,25 @@ export function topBottomPlan(puzzle, area, cellHeight, measure = (items, width,
         const cluesHeight = body - gridSize - 10;
         if (cluesHeight < 70)
             continue;
-        for (const [columns, font] of [[3, 9], [3, 8.5], [3, 8], [3, 7.5], [3, 7], [4, 7], [4, 6.5]]) {
+        // A short clue list reads best as one column; a long one is packed densely
+        // into four or five columns so it never fills a page in a single column with
+        // the rest of the page empty.
+        // One column only for a genuinely short list (under half the available
+        // height). A long list is packed into several columns instead of running
+        // down the page and leaving the rest of it empty.
+        if (puzzle.puzzleType !== "kriss-kross" && measure(items, area.width, 1, 9) <= cluesHeight * 0.45) {
+            return { gridSize, cluesHeight, columns: 1, font: 9, fits: true };
+        }
+        const preferredColumns = puzzle.puzzleType === "kriss-kross" ? 3 : 4;
+        for (const [columns, font] of [
+            [preferredColumns, 9],
+            [preferredColumns, 8.5],
+            [preferredColumns, 8],
+            [preferredColumns, 7.5],
+            [preferredColumns, 7],
+            [5, 7],
+            [5, 6.5]
+        ]) {
             if (measure(items, area.width, columns, font) <= cluesHeight) {
                 return { gridSize, cluesHeight, columns, font, fits: true };
             }
@@ -1065,12 +1083,14 @@ export function topBottomPlan(puzzle, area, cellHeight, measure = (items, width,
 function drawClues(doc, items, x, y, width, height, fit) {
     const columnWidth = width / fit.columns - 8;
     const leftover = [];
-    let overflowed = false;
+    // Each column fills independently. Stopping the whole layout as soon as one
+    // column filled was what left single narrow columns with the page half empty.
     balanceColumns(items, fit.columns).forEach((bucket, columnIndex) => {
         let cursorY = y;
+        let columnFull = false;
         const columnX = x + columnIndex * (columnWidth + 8);
         for (const item of bucket) {
-            if (overflowed) {
+            if (columnFull) {
                 leftover.push(item);
                 continue;
             }
@@ -1078,8 +1098,8 @@ function drawClues(doc, items, x, y, width, height, fit) {
             doc.font(item.heading ? boldFontName : bodyFontName).fontSize(size);
             const textHeight = doc.heightOfString(item.text, { width: columnWidth });
             if (cursorY + textHeight > y + height) {
-                // The rest of the reading order moves to the continuation page.
-                overflowed = true;
+                // Only this column is full; the remaining columns keep filling.
+                columnFull = true;
                 leftover.push(item);
                 continue;
             }
