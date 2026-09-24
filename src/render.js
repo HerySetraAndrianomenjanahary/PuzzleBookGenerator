@@ -99,12 +99,28 @@ export function canSharePage(puzzle, area = defaultContentArea) {
     return true;
 }
 /** Pairs consecutive puzzles whenever both stay legible on half a page. */
-export function buildPages(puzzles, area = defaultContentArea) {
+export function buildPages(puzzles, area = defaultContentArea, fitsHalfCell = (puzzle, cellHeight) => topBottomPlan(puzzle, area, cellHeight).fits) {
     const pages = [];
+    const halfCell = (area.height - 16) / 2;
     for (let index = 0; index < puzzles.length; index += 1) {
         const current = puzzles[index];
         const next = puzzles[index + 1];
-        if (next && canSharePage(current, area) && canSharePage(next, area)) {
+        // Board on top, clues underneath: two per page when both halves fit.
+        if (topAndBottomLayoutFamilies.has(current.puzzleType) && next && topAndBottomLayoutFamilies.has(next.puzzleType)) {
+            if (fitsHalfCell(current, halfCell) && fitsHalfCell(next, halfCell)) {
+                pages.push([current, next]);
+                index += 1;
+            }
+            else {
+                pages.push([current]);
+            }
+            continue;
+        }
+        if (topAndBottomLayoutFamilies.has(current.puzzleType)) {
+            pages.push([current]);
+            continue;
+        }
+        if (next && !topAndBottomLayoutFamilies.has(next.puzzleType) && canSharePage(current, area) && canSharePage(next, area)) {
             pages.push([current, next]);
             index += 1;
         }
@@ -684,17 +700,15 @@ function drawPuzzleCell(doc, puzzle, area, large) {
     const spec = gridSpecFor(puzzle);
     const bodyHeight = area.y + area.height - startY;
     const extras = puzzleExtrasFor(puzzle);
-    if (puzzle.puzzleType === "codeword") {
-        const gridHeight = Math.min(bodyHeight * 0.62, 230);
-        const endY = drawCodewordPuzzle(doc, puzzle, area.x, startY, area.width, gridHeight);
-        drawExtras(doc, extras, area.x, endY + 8, area.width, Math.max(area.y + area.height - endY - 8, 0), spec.clueColumns, !large);
-        return;
+    // Board on top, clues underneath, for the clue-grid families.
+    if (topAndBottomLayoutFamilies.has(puzzle.puzzleType)) {
+        return drawTopAndBottomPuzzle(doc, puzzle, area, startY, bodyHeight, spec, extras);
     }
     if (puzzle.puzzleType === "codeword") {
         const gridHeight = Math.min(bodyHeight * 0.62, 230);
         const endY = drawCodewordPuzzle(doc, puzzle, area.x, startY, area.width, gridHeight);
         drawExtras(doc, extras, area.x, endY + 8, area.width, Math.max(area.y + area.height - endY - 8, 0), spec.clueColumns, !large);
-        return;
+        return 0;
     }
     if (puzzle.puzzleType === "pieceword") {
         // Reserve the block sheet's room first, then give the clues only the space
@@ -712,7 +726,7 @@ function drawPuzzleCell(doc, puzzle, area, large) {
         const remaining = area.y + area.height - piecesY - 2;
         if (remaining > 40)
             drawPiecewordPieces(doc, puzzle, area.x, piecesY, area.width, remaining);
-        return;
+        return 0;
     }
     const sideBySide = area.width > 320;
     const gridWidth = sideBySide ? area.width * 0.58 : area.width;
@@ -729,6 +743,7 @@ function drawPuzzleCell(doc, puzzle, area, large) {
         const legendY = Math.min(startY + drawn.height + 6, area.y + area.height - 30);
         drawColourLegend(doc, puzzle, area.x, legendY, area.width);
     }
+    return 0;
 }
 /** Answers are measured, so blocks can never overlap and none is dropped. */
 function drawAnswerPage(doc, puzzles, area, heading, pageLabel) {
@@ -832,14 +847,20 @@ async function renderInterior(input, pass) {
     for (const puzzle of puzzles)
         byDifficulty.set(puzzle.difficultyLabel, (byDifficulty.get(puzzle.difficultyLabel) ?? 0) + 1);
     doc.font(bodyFontName).fontSize(10).fillColor("#222222").text([...byDifficulty.entries()].map(([label, count]) => `${label}: ${count} puzzles`).join("\n"), area.x, area.y + 24, { width: area.width, height: area.height - 60, ellipsis: false });
-    const pages = buildPages(puzzles);
+    // Pairing and drawing must agree, so the decision uses the same font metrics as
+    // the drawing; otherwise a half-page cell is planned as fitting and overflows.
+    const fitsHalfCell = (puzzle, cellHeight) => topBottomPlan(puzzle, area, cellHeight, (list, width, columns, font) => measuredClueHeight(doc, list, width, columns, font)).fits;
+    const pages = buildPages(puzzles, area, fitsHalfCell);
     const pageMap = [];
     const firstPuzzlePage = 3;
-    pages.forEach((pagePuzzles, pageIndex) => {
+    let pageCursor = firstPuzzlePage;
+    pages.forEach((pagePuzzles) => {
         doc.addPage();
         const pagesBefore = doc.bufferedPageRange().count;
+        let extraPages = 0;
         if (pagePuzzles.length === 1) {
-            drawPuzzleCell(doc, pagePuzzles[0], area, true);
+            // A grid/clue page may legitimately continue onto the next page.
+            extraPages = drawPuzzleCell(doc, pagePuzzles[0], area, true);
         }
         else {
             const gap = 16;
@@ -849,20 +870,21 @@ async function renderInterior(input, pass) {
             drawPuzzleCell(doc, pagePuzzles[1], { x: area.x, y: area.y + half + gap, width: area.width, height: half }, false);
         }
         const pagesAfter = doc.bufferedPageRange().count;
-        if (pagesAfter !== pagesBefore) {
-            throw new Error(`Puzzle ${pagePuzzles.map((puzzle) => `${puzzle.puzzleNumber} (${puzzle.puzzleType})`).join(" + ")} overflowed its page by ${pagesAfter - pagesBefore}; the layout must fit without pdfkit paginating.`);
+        if (pagesAfter !== pagesBefore + extraPages) {
+            throw new Error(`Puzzle ${pagePuzzles.map((puzzle) => `${puzzle.puzzleNumber} (${puzzle.puzzleType})`).join(" + ")} overflowed: ${pagesAfter - pagesBefore - extraPages} unexpected page(s).`);
         }
         for (const puzzle of pagePuzzles)
-            pageMap.push({ puzzleNumber: puzzle.puzzleNumber, pageIndex: firstPuzzlePage + pageIndex, answerPageIndex: null });
+            pageMap.push({ puzzleNumber: puzzle.puzzleNumber, pageIndex: pageCursor, answerPageIndex: null });
+        pageCursor += 1 + extraPages;
     });
     // A puzzle page that overflows makes pdfkit insert a page of its own, which
     // shifts every following reference. Fail loudly instead of shipping that.
+    // pageCursor already includes legitimate clue-continuation pages.
     const pagesAfterPuzzles = doc.bufferedPageRange().count;
-    const expectedAfterPuzzles = firstPuzzlePage + pages.length;
-    if (pagesAfterPuzzles !== expectedAfterPuzzles) {
-        throw new Error(`Puzzle pages overflowed by ${pagesAfterPuzzles - expectedAfterPuzzles} page(s); the puzzle layout must fit its pages.`);
+    if (pagesAfterPuzzles !== pageCursor) {
+        throw new Error(`Puzzle pages overflowed by ${pagesAfterPuzzles - pageCursor} page(s); the puzzle layout must fit its pages.`);
     }
-    const answerStartIndex = firstPuzzlePage + pages.length + 1;
+    const answerStartIndex = pageCursor + 1;
     if (input.answersInBack && puzzles.length) {
         doc.addPage();
         doc.font(boldFontName).fontSize(24).fillColor("#111111").text("Answers", area.x, area.y + 200, { width: area.width, align: "center" });
@@ -980,11 +1002,122 @@ export async function renderBookArtifacts(input) {
         pageMap: digital.pageMap
     };
 }
-
+// --- board on top, clues underneath ------------------------------------------------
 /**
- * Studio entry point: renders a bundle from a JSON file into the four artifacts
- * the studio offers, using the same renderer as the web app.
+ * Families laid out with the board across the top of the cell and the clues
+ * underneath, so both can be as large as the page allows. Two of these cells
+ * share a page; a puzzle that cannot fit half a page gets a full page instead.
  */
+export const topAndBottomLayoutFamilies = new Set(["crossword", "cryptic-crossword", "kriss-kross"]);
+export function flattenClues(blocks) {
+    const items = [];
+    for (const block of blocks)
+        [block.heading, ...block.lines].forEach((text, index) => items.push({ heading: index === 0, text }));
+    return items;
+}
+/** Rough printed height of a clue list, used when no font metrics are available. */
+function clueHeight(items, width, columns, font) {
+    const columnWidth = Math.max(60, width / columns - 8);
+    const charactersPerLine = Math.max(14, Math.floor(columnWidth / (font * 0.56)));
+    const rows = items.reduce((total, item) => total + Math.max(1, Math.ceil(item.text.length / charactersPerLine)), 0);
+    return Math.ceil(rows / columns) * (font * 1.22);
+}
+/** Exact clue height with the real font metrics, so a plan matches the drawing. */
+function measuredClueHeight(doc, items, width, columns, font) {
+    const columnWidth = width / columns - 8;
+    let tallest = 0;
+    for (const bucket of balanceColumns(items, columns)) {
+        let total = 0;
+        for (const item of bucket) {
+            doc.font(item.heading ? boldFontName : bodyFontName).fontSize(item.heading ? font + 1 : font);
+            total += doc.heightOfString(item.text, { width: columnWidth }) + 1.5;
+        }
+        tallest = Math.max(tallest, total);
+    }
+    return tallest;
+}
+/**
+ * Plans one cell: grid on top, clues underneath. The grid takes as much of the
+ * top as it can while every clue still fits below it at a readable size.
+ */
+export function topBottomPlan(puzzle, area, cellHeight, measure = (items, width, columns, font) => clueHeight(items, width, columns, font)) {
+    const items = flattenClues(puzzleExtrasFor(puzzle));
+    const body = Math.max(120, cellHeight - 30);
+    const span = gridSpan(puzzle);
+    // Start with a large grid and only shrink it until the clues fit underneath.
+    for (const gridShare of [0.72, 0.66, 0.6, 0.54, 0.48, 0.42]) {
+        const gridSize = Math.min(area.width, body * gridShare);
+        const cell = span ? gridSize / span : 24;
+        if (cell < minimumCellSize)
+            continue;
+        const cluesHeight = body - gridSize - 10;
+        if (cluesHeight < 70)
+            continue;
+        for (const [columns, font] of [[3, 9], [3, 8.5], [3, 8], [3, 7.5], [3, 7], [4, 7], [4, 6.5]]) {
+            if (measure(items, area.width, columns, font) <= cluesHeight) {
+                return { gridSize, cluesHeight, columns, font, fits: true };
+            }
+        }
+    }
+    return { gridSize: Math.min(area.width, body * 0.44), cluesHeight: Math.max(80, body * 0.46), columns: 4, font: 6.5, fits: false };
+}
+/** Draws clues into a box and returns the ones that need another page. */
+function drawClues(doc, items, x, y, width, height, fit) {
+    const columnWidth = width / fit.columns - 8;
+    const leftover = [];
+    let overflowed = false;
+    balanceColumns(items, fit.columns).forEach((bucket, columnIndex) => {
+        let cursorY = y;
+        const columnX = x + columnIndex * (columnWidth + 8);
+        for (const item of bucket) {
+            if (overflowed) {
+                leftover.push(item);
+                continue;
+            }
+            const size = item.heading ? fit.font + 1 : fit.font;
+            doc.font(item.heading ? boldFontName : bodyFontName).fontSize(size);
+            const textHeight = doc.heightOfString(item.text, { width: columnWidth });
+            if (cursorY + textHeight > y + height) {
+                // The rest of the reading order moves to the continuation page.
+                overflowed = true;
+                leftover.push(item);
+                continue;
+            }
+            doc.fillColor(item.heading ? "#111111" : "#222222");
+            doc.text(item.text, columnX, cursorY, { width: columnWidth, lineBreak: true });
+            cursorY += textHeight + 1.5;
+        }
+    });
+    return leftover;
+}
+/**
+ * Draws one grid/clue cell. Returns the number of continuation pages it added
+ * (only a full-page cell can need them, and only the largest crosswords do).
+ */
+function drawTopAndBottomPuzzle(doc, puzzle, area, startY, bodyHeight, spec, extras) {
+    const items = flattenClues(extras);
+    const headerHeight = Math.max(0, startY - area.y);
+    const plan = topBottomPlan(puzzle, area, bodyHeight + headerHeight, (list, width, columns, font) => measuredClueHeight(doc, list, width, columns, font));
+    const centredX = area.x + Math.max(0, (area.width - plan.gridSize) / 2);
+    drawGrid(doc, { grid: spec.grid, x: centredX, y: startY, width: plan.gridSize, height: plan.gridSize, ...spec.options });
+    const cluesY = startY + plan.gridSize + 10;
+    const cluesHeight = Math.max(area.y + area.height - cluesY, 70);
+    const fit = { columns: plan.columns, font: plan.font };
+    let leftover = drawClues(doc, items, area.x, cluesY, area.width, cluesHeight, fit);
+    let extraPages = 0;
+    while (leftover.length) {
+        doc.addPage();
+        extraPages += 1;
+        doc.font(boldFontName).fontSize(11).fillColor("#111111");
+        doc.text(`Puzzle ${puzzle.puzzleNumber} - ${puzzle.title} - ${puzzle.difficultyLabel}`, area.x, area.y, { width: area.width * 0.7, lineBreak: false });
+        doc.font(bodyFontName).fontSize(9).fillColor("#555555");
+        doc.text(`Clues continued (${extraPages})`, area.x, area.y, { width: area.width, align: "right", lineBreak: false });
+        leftover = drawClues(doc, leftover, area.x, area.y + 20, area.width, area.height - 24, fit);
+    }
+    return extraPages;
+}
+
+/** Studio entry point: renders a bundle into the four artifacts the studio offers. */
 export async function renderBook(bundle) {
   const result = await renderBookArtifacts({
     title: bundle.title ?? "Puzzle book",
